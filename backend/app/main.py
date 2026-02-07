@@ -34,7 +34,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_methods=["GET"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -50,6 +50,7 @@ CHECK_TYPE_PROFILES: dict[str, dict] = {
     },
     "overseerr": {"path": "/api/v1/status", "healthy_status_codes": {200}},
     "tautulli": {"path": "/api/v2?cmd=arnold", "healthy_status_codes": {200}},
+    "arrs": {"path": "/api/v3/health", "healthy_status_codes": {200}},
     "radarr": {"path": "/api/v3/health", "healthy_status_codes": {200}},
     "sonarr": {"path": "/api/v3/health", "healthy_status_codes": {200}},
     "ollama": {"path": "/api/tags", "healthy_status_codes": {200}},
@@ -175,6 +176,24 @@ async def upsert_admin_service(
     config_store.upsert_service(service)
     cache.clear()
     return service
+
+
+@app.delete("/api/admin/services/{service_id}", response_model=ServiceConfig)
+async def delete_admin_service(service_id: str, _: None = Depends(_require_admin)):
+    removed = config_store.delete_service(service_id)
+    if removed is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    cache.clear()
+    return removed
+
+
+@app.post("/api/admin/services/{service_id}/toggle", response_model=ServiceConfig)
+async def toggle_admin_service(service_id: str, _: None = Depends(_require_admin)):
+    updated = config_store.toggle_service(service_id)
+    if updated is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    cache.clear()
+    return updated
 
 
 @app.get("/healthz")

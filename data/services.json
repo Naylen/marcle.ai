@@ -8,48 +8,11 @@
       "check_type": "proxmox",
       "enabled": true,
       "icon": "proxmox.svg",
-      "description": "Virtualisation platform",
+      "description": "Virtualization platform",
+      "verify_ssl": false,
       "auth_ref": {
         "scheme": "bearer",
         "env": "PROXMOX_API_TOKEN"
-      }
-    },
-    {
-      "id": "unifi-network",
-      "name": "UniFi Network",
-      "group": "core",
-      "url": "",
-      "check_type": "unifi-network",
-      "enabled": true,
-      "icon": "unifi.svg",
-      "description": "Network management"
-    },
-    {
-      "id": "unifi-protect",
-      "name": "UniFi Protect",
-      "group": "core",
-      "url": "",
-      "check_type": "unifi-protect",
-      "enabled": true,
-      "icon": "unifi-protect.svg",
-      "description": "Camera surveillance",
-      "auth_ref": {
-        "scheme": "bearer",
-        "env": "UNIFI_API_KEY"
-      }
-    },
-    {
-      "id": "homeassistant",
-      "name": "Home Assistant",
-      "group": "core",
-      "url": "",
-      "check_type": "homeassistant",
-      "enabled": true,
-      "icon": "homeassistant.svg",
-      "description": "Home automation",
-      "auth_ref": {
-        "scheme": "bearer",
-        "env": "HOMEASSISTANT_TOKEN"
       }
     },
     {
@@ -61,10 +24,53 @@
       "enabled": true,
       "icon": "plex.svg",
       "description": "Media server",
+      "verify_ssl": false,
       "auth_ref": {
         "scheme": "header",
         "env": "PLEX_TOKEN",
         "header_name": "X-Plex-Token"
+      }
+    },
+    {
+      "id": "arrs",
+      "name": "Arrs",
+      "group": "media",
+      "url": "",
+      "check_type": "arrs",
+      "enabled": true,
+      "icon": "arrs.svg",
+      "description": "Media automation stack",
+      "verify_ssl": false,
+      "auth_ref": {
+        "scheme": "header",
+        "env": "RADARR_API_KEY",
+        "header_name": "X-Api-Key"
+      }
+    },
+    {
+      "id": "unifi_network",
+      "name": "UniFi Network",
+      "group": "core",
+      "url": "",
+      "check_type": "unifi-network",
+      "enabled": true,
+      "icon": "unifi.svg",
+      "description": "Network management",
+      "verify_ssl": false
+    },
+    {
+      "id": "unifi_protect",
+      "name": "UniFi Protect",
+      "group": "core",
+      "url": "",
+      "check_type": "unifi-protect",
+      "enabled": true,
+      "icon": "unifi-protect.svg",
+      "description": "Camera surveillance",
+      "verify_ssl": false,
+      "auth_ref": {
+        "scheme": "bearer",
+        "env": "UNIFI_API_KEY"
       }
     },
     {
@@ -76,6 +82,7 @@
       "enabled": true,
       "icon": "overseerr.svg",
       "description": "Media requests",
+      "verify_ssl": false,
       "auth_ref": {
         "scheme": "header",
         "env": "OVERSEERR_API_KEY",
@@ -91,6 +98,7 @@
       "enabled": true,
       "icon": "tautulli.svg",
       "description": "Plex monitoring",
+      "verify_ssl": false,
       "auth_ref": {
         "scheme": "header",
         "env": "TAUTULLI_API_KEY",
@@ -98,31 +106,18 @@
       }
     },
     {
-      "id": "radarr",
-      "name": "Radarr",
-      "group": "media",
+      "id": "home_assistant",
+      "name": "Home Assistant",
+      "group": "core",
       "url": "",
-      "check_type": "radarr",
+      "check_type": "homeassistant",
       "enabled": true,
-      "icon": "radarr.svg",
+      "icon": "homeassistant.svg",
+      "description": "Home automation",
+      "verify_ssl": false,
       "auth_ref": {
-        "scheme": "header",
-        "env": "RADARR_API_KEY",
-        "header_name": "X-Api-Key"
-      }
-    },
-    {
-      "id": "sonarr",
-      "name": "Sonarr",
-      "group": "media",
-      "url": "",
-      "check_type": "sonarr",
-      "enabled": true,
-      "icon": "sonarr.svg",
-      "auth_ref": {
-        "scheme": "header",
-        "env": "SONARR_API_KEY",
-        "header_name": "X-Api-Key"
+        "scheme": "bearer",
+        "env": "HOMEASSISTANT_TOKEN"
       }
     },
     {
@@ -133,7 +128,8 @@
       "check_type": "ollama",
       "enabled": true,
       "icon": "ollama.svg",
-      "description": "Local LLM inference"
+      "description": "Local LLM inference",
+      "verify_ssl": false
     },
     {
       "id": "n8n",
@@ -143,7 +139,8 @@
       "check_type": "n8n",
       "enabled": true,
       "icon": "n8n.svg",
-      "description": "Workflow automation"
+      "description": "Workflow automation",
+      "verify_ssl": false
     }
   ]
 }

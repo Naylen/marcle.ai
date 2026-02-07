@@ -4,9 +4,9 @@ services:
     ports:
       - "8080:80"
     depends_on:
-      - api
+      - backend
 
-  api:
+  backend:
     build: ./backend
     ports:
       - "8000:8000"

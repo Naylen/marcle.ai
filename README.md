@@ -23,7 +23,7 @@ docker compose up --build
 
 Frontend: `http://localhost:8080`
 API: `http://localhost:8000/api/status`
-Admin UI: `http://localhost:8080/admin.html`
+Admin UI: `http://localhost:8080/admin`
 
 ## Frontend
 
@@ -53,6 +53,8 @@ Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 - `GET /api/admin/services`
 - `POST /api/admin/services`
 - `PUT /api/admin/services/{service_id}`
+- `DELETE /api/admin/services/{service_id}`
+- `POST /api/admin/services/{service_id}/toggle`
 
 `/api/status` returns normalized status for enabled services from `services.json`.
 Responses are cached in-memory with a 45-second TTL. All checks run concurrently.
@@ -93,7 +95,7 @@ See `.env.example`. All are optional; unconfigured or missing-credential service
 
 Important:
 - `ADMIN_TOKEN` controls admin API access.
-- `SERVICES_CONFIG_PATH` points to runtime config file (default `./data/services.json`).
+- `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
 - `auth_ref.env` names must exist in backend runtime environment.
 
 ## Deployment

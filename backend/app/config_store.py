@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import tempfile
 from pathlib import Path
 from threading import Lock
 
@@ -30,7 +31,7 @@ def _default_services() -> list[ServiceConfig]:
             auth_ref=AuthRef(scheme="bearer", env="PROXMOX_API_TOKEN"),
         ),
         ServiceConfig(
-            id="unifi-network",
+            id="unifi_network",
             name="UniFi Network",
             group=ServiceGroup.CORE,
             url=os.getenv("UNIFI_URL", ""),
@@ -40,7 +41,7 @@ def _default_services() -> list[ServiceConfig]:
             description="Network management",
         ),
         ServiceConfig(
-            id="unifi-protect",
+            id="unifi_protect",
             name="UniFi Protect",
             group=ServiceGroup.CORE,
             url=os.getenv("UNIFI_PROTECT_URL", ""),
@@ -51,7 +52,7 @@ def _default_services() -> list[ServiceConfig]:
             auth_ref=AuthRef(scheme="bearer", env="UNIFI_API_KEY"),
         ),
         ServiceConfig(
-            id="homeassistant",
+            id="home_assistant",
             name="Home Assistant",
             group=ServiceGroup.CORE,
             url=os.getenv("HOMEASSISTANT_URL", ""),
@@ -71,6 +72,17 @@ def _default_services() -> list[ServiceConfig]:
             enabled=True,
             description="Media server",
             auth_ref=AuthRef(scheme="header", env="PLEX_TOKEN", header_name="X-Plex-Token"),
+        ),
+        ServiceConfig(
+            id="arrs",
+            name="Arrs",
+            group=ServiceGroup.MEDIA,
+            url=os.getenv("RADARR_URL", ""),
+            check_type="arrs",
+            icon="arrs.svg",
+            enabled=True,
+            description="Media automation stack",
+            auth_ref=AuthRef(scheme="header", env="RADARR_API_KEY", header_name="X-Api-Key"),
         ),
         ServiceConfig(
             id="overseerr",
@@ -93,26 +105,6 @@ def _default_services() -> list[ServiceConfig]:
             enabled=True,
             description="Plex monitoring",
             auth_ref=AuthRef(scheme="header", env="TAUTULLI_API_KEY", header_name="X-Api-Key"),
-        ),
-        ServiceConfig(
-            id="radarr",
-            name="Radarr",
-            group=ServiceGroup.MEDIA,
-            url=os.getenv("RADARR_URL", ""),
-            check_type="radarr",
-            icon="radarr.svg",
-            enabled=True,
-            auth_ref=AuthRef(scheme="header", env="RADARR_API_KEY", header_name="X-Api-Key"),
-        ),
-        ServiceConfig(
-            id="sonarr",
-            name="Sonarr",
-            group=ServiceGroup.MEDIA,
-            url=os.getenv("SONARR_URL", ""),
-            check_type="sonarr",
-            icon="sonarr.svg",
-            enabled=True,
-            auth_ref=AuthRef(scheme="header", env="SONARR_API_KEY", header_name="X-Api-Key"),
         ),
         ServiceConfig(
             id="ollama",
@@ -165,7 +157,21 @@ class ConfigStore:
         payload = {
             "services": [svc.model_dump(mode="json", exclude_none=True) for svc in services],
         }
-        self.path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(payload, indent=2) + "\n"
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=self.path.parent,
+            prefix=f"{self.path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp.write(content)
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            tmp_path = Path(tmp.name)
+        tmp_path.replace(self.path)
 
     def list_services(self) -> list[ServiceConfig]:
         with self._lock:
@@ -191,6 +197,36 @@ class ConfigStore:
             if not replaced:
                 services.append(service)
             self._write_services_unlocked(services)
+
+    def delete_service(self, service_id: str) -> ServiceConfig | None:
+        with self._lock:
+            services = self._read_services_unlocked()
+            remaining: list[ServiceConfig] = []
+            removed: ServiceConfig | None = None
+            for service in services:
+                if service.id == service_id:
+                    removed = service
+                    continue
+                remaining.append(service)
+            if removed is None:
+                return None
+            self._write_services_unlocked(remaining)
+            return removed
+
+    def toggle_service(self, service_id: str) -> ServiceConfig | None:
+        with self._lock:
+            services = self._read_services_unlocked()
+            updated: ServiceConfig | None = None
+            for i, existing in enumerate(services):
+                if existing.id != service_id:
+                    continue
+                updated = existing.model_copy(update={"enabled": not existing.enabled})
+                services[i] = updated
+                break
+            if updated is None:
+                return None
+            self._write_services_unlocked(services)
+            return updated
 
 
 config_store = ConfigStore(config.SERVICES_CONFIG_PATH)
