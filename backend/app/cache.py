@@ -23,5 +23,10 @@ class StatusCache:
         self._data = data
         self._timestamp = time.monotonic()
 
+    def invalidate(self) -> None:
+        """Force the next request to re-run checks."""
+        self._data = None
+        self._timestamp = 0.0
+
 
 cache = StatusCache()

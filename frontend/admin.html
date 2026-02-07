@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>marcle.ai — admin</title>
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,300&display=swap" rel="stylesheet">
+  <style>
+    /* admin-specific overrides */
+    .admin-wrap { max-width: var(--max-width); margin: 6rem auto 2rem; padding: 0 var(--space-md); }
+    .admin-section { margin-bottom: var(--space-lg); }
+    .admin-section h2 { font-family: var(--font-mono); font-size: 0.85rem; font-weight: 500; letter-spacing: 0.06em; color: var(--accent); margin-bottom: var(--space-sm); text-transform: uppercase; }
+
+    /* token input */
+    .token-bar { display: flex; gap: 0.5rem; margin-bottom: var(--space-md); }
+    .token-bar input { flex: 1; }
+
+    /* forms */
+    label { display: block; font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); margin-bottom: 0.25rem; text-transform: uppercase; letter-spacing: 0.06em; }
+    input, select { font-family: var(--font-mono); font-size: 0.8rem; background: var(--surface); color: var(--text); border: 1px solid var(--border); border-radius: 3px; padding: 0.5rem 0.65rem; width: 100%; }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    select { appearance: none; cursor: pointer; }
+
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+    .form-grid .full { grid-column: 1 / -1; }
+    .form-row { margin-bottom: var(--space-xs); }
+
+    .auth-fields { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 4px; padding: var(--space-sm); margin-top: var(--space-xs); }
+    .auth-fields .hint { font-family: var(--font-mono); font-size: 0.65rem; color: var(--text-faint); margin-top: 0.35rem; }
+
+    .hidden { display: none !important; }
+
+    /* buttons */
+    .btn { font-family: var(--font-mono); font-size: 0.75rem; padding: 0.5rem 1rem; border-radius: 3px; cursor: pointer; border: 1px solid var(--border); transition: all 0.15s ease; }
+    .btn-primary { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+    .btn-primary:hover { opacity: 0.85; }
+    .btn-danger { background: transparent; color: var(--red); border-color: var(--red); }
+    .btn-danger:hover { background: var(--red); color: var(--bg); }
+    .btn-ghost { background: transparent; color: var(--text-dim); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text-dim); }
+    .btn-bar { display: flex; gap: 0.5rem; margin-top: var(--space-sm); }
+
+    /* service list */
+    .svc-list { display: flex; flex-direction: column; gap: 1px; background: var(--border); border: 1px solid var(--border); border-radius: 4px; overflow: hidden; }
+    .svc-item { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: var(--bg-raised); }
+    .svc-item:hover { background: var(--surface); }
+    .svc-meta { display: flex; flex-direction: column; gap: 0.15rem; }
+    .svc-name { font-family: var(--font-mono); font-size: 0.8rem; color: var(--text); }
+    .svc-detail { font-family: var(--font-mono); font-size: 0.6rem; color: var(--text-faint); }
+    .svc-actions { display: flex; gap: 0.5rem; }
+    .svc-enabled { color: var(--green); }
+    .svc-disabled { color: var(--text-faint); }
+    .svc-badge { font-family: var(--font-mono); font-size: 0.6rem; padding: 0.15rem 0.4rem; border-radius: 2px; background: var(--surface); color: var(--text-dim); }
+
+    /* toast */
+    .toast { position: fixed; bottom: 2rem; right: 2rem; font-family: var(--font-mono); font-size: 0.75rem; padding: 0.6rem 1rem; border-radius: 4px; background: var(--surface); color: var(--text); border: 1px solid var(--border); opacity: 0; transition: opacity 0.2s ease; z-index: 200; pointer-events: none; }
+    .toast.visible { opacity: 1; }
+    .toast.error { border-color: var(--red); color: var(--red); }
+
+    /* responsive */
+    @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } .admin-wrap { padding: 0 var(--space-sm); } }
+  </style>
+</head>
+<body>
+  <div class="grain"></div>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="/" class="wordmark">marcle<span class="dot">.</span>ai</a>
+      <nav class="header-nav">
+        <a href="/" class="nav-link">dashboard</a>
+        <a href="/admin.html" class="nav-link" style="color:var(--text)">admin</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="admin-wrap">
+    <!-- Auth -->
+    <section class="admin-section">
+      <h2>authenticate</h2>
+      <div class="token-bar">
+        <input type="password" id="admin-token" placeholder="ADMIN_TOKEN">
+        <button class="btn btn-primary" id="btn-connect">connect</button>
+      </div>
+      <div id="auth-status" style="font-family:var(--font-mono);font-size:0.7rem;color:var(--text-faint);"></div>
+    </section>
+
+    <!-- Service list -->
+    <section class="admin-section" id="section-services" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-sm);">
+        <h2 style="margin-bottom:0;">services</h2>
+        <button class="btn btn-ghost" id="btn-new">+ new service</button>
+      </div>
+      <div id="svc-list" class="svc-list"></div>
+    </section>
+
+    <!-- Edit form -->
+    <section class="admin-section" id="section-form" style="display:none;">
+      <h2 id="form-title">add service</h2>
+      <form id="svc-form" autocomplete="off">
+        <div class="form-grid">
+          <div class="form-row">
+            <label for="f-id">id</label>
+            <input id="f-id" name="id" required placeholder="my-service">
+          </div>
+          <div class="form-row">
+            <label for="f-name">name</label>
+            <input id="f-name" name="name" required placeholder="My Service">
+          </div>
+          <div class="form-row">
+            <label for="f-group">group</label>
+            <select id="f-group" name="group">
+              <option value="core">core</option>
+              <option value="media">media</option>
+              <option value="automation">automation</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label for="f-url">url</label>
+            <input id="f-url" name="url" placeholder="https://service.local:8443">
+          </div>
+          <div class="form-row">
+            <label for="f-path">health check path</label>
+            <input id="f-path" name="path" value="/" placeholder="/health">
+          </div>
+          <div class="form-row">
+            <label for="f-icon">icon</label>
+            <input id="f-icon" name="icon" placeholder="service.svg">
+          </div>
+          <div class="form-row full">
+            <label for="f-desc">description</label>
+            <input id="f-desc" name="description" placeholder="What does this service do?">
+          </div>
+          <div class="form-row">
+            <label for="f-codes">healthy status codes</label>
+            <input id="f-codes" name="healthy_status_codes" value="200" placeholder="200,302">
+          </div>
+          <div class="form-row">
+            <label for="f-enabled">enabled</label>
+            <select id="f-enabled" name="enabled">
+              <option value="true">yes</option>
+              <option value="false">no</option>
+            </select>
+          </div>
+
+          <!-- Auth Ref -->
+          <div class="form-row full">
+            <label for="f-auth-scheme">auth scheme</label>
+            <select id="f-auth-scheme" name="auth_scheme">
+              <option value="none">none</option>
+              <option value="bearer">bearer</option>
+              <option value="basic">basic</option>
+              <option value="header">header (custom)</option>
+            </select>
+          </div>
+          <div class="form-row full auth-fields" id="auth-fields">
+            <div class="form-row" id="row-env">
+              <label for="f-auth-env">env var name</label>
+              <input id="f-auth-env" name="auth_env" placeholder="MY_SERVICE_TOKEN">
+              <div class="hint">Name of the environment variable holding the secret. Set the actual value in backend .env — never enter the secret here.</div>
+            </div>
+            <div class="form-row hidden" id="row-header-name">
+              <label for="f-header-name">header name</label>
+              <input id="f-header-name" name="header_name" placeholder="X-Api-Key">
+              <div class="hint">HTTP header name to send the secret as (e.g. X-Api-Key).</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="btn-bar">
+          <button type="submit" class="btn btn-primary">save</button>
+          <button type="button" class="btn btn-ghost" id="btn-cancel">cancel</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+  (function () {
+    'use strict';
+
+    var API_BASE = window.MARCLE_API_BASE || '';
+    var token = '';
+
+    // DOM refs
+    var $token   = document.getElementById('admin-token');
+    var $connect = document.getElementById('btn-connect');
+    var $status  = document.getElementById('auth-status');
+    var $secSvc  = document.getElementById('section-services');
+    var $secForm = document.getElementById('section-form');
+    var $list    = document.getElementById('svc-list');
+    var $form    = document.getElementById('svc-form');
+    var $title   = document.getElementById('form-title');
+    var $scheme  = document.getElementById('f-auth-scheme');
+    var $authF   = document.getElementById('auth-fields');
+    var $rowEnv  = document.getElementById('row-env');
+    var $rowHdr  = document.getElementById('row-header-name');
+    var $toast   = document.getElementById('toast');
+
+    function toast(msg, isError) {
+      $toast.textContent = msg;
+      $toast.className = 'toast visible' + (isError ? ' error' : '');
+      setTimeout(function () { $toast.className = 'toast'; }, 3000);
+    }
+
+    function authHeaders() { return { 'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json' }; }
+
+    // Auth scheme toggle
+    $scheme.addEventListener('change', function () {
+      var s = $scheme.value;
+      if (s === 'none') { $authF.classList.add('hidden'); }
+      else { $authF.classList.remove('hidden'); }
+      if (s === 'header') { $rowHdr.classList.remove('hidden'); }
+      else { $rowHdr.classList.add('hidden'); }
+    });
+    // Init
+    $authF.classList.add('hidden');
+
+    // Connect
+    $connect.addEventListener('click', function () {
+      token = $token.value.trim();
+      if (!token) { toast('Enter admin token', true); return; }
+      fetchServices();
+    });
+    $token.addEventListener('keydown', function (e) { if (e.key === 'Enter') $connect.click(); });
+
+    // Fetch services
+    function fetchServices() {
+      fetch(API_BASE + '/api/admin/services', { headers: authHeaders() })
+        .then(function (r) {
+          if (r.status === 401) throw new Error('Invalid token');
+          if (r.status === 503) throw new Error('Admin disabled');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (data) {
+          $status.textContent = 'connected';
+          $status.style.color = 'var(--green)';
+          $secSvc.style.display = '';
+          renderList(data);
+        })
+        .catch(function (err) {
+          $status.textContent = err.message;
+          $status.style.color = 'var(--red)';
+          $secSvc.style.display = 'none';
+        });
+    }
+
+    function renderList(services) {
+      if (!services.length) {
+        $list.innerHTML = '<div style="padding:1rem;text-align:center;font-family:var(--font-mono);font-size:0.75rem;color:var(--text-faint);background:var(--bg-raised);">No services configured. Click "+ new service" to add one.</div>';
+        return;
+      }
+      $list.innerHTML = services.map(function (s) {
+        var enabledCls = s.enabled ? 'svc-enabled' : 'svc-disabled';
+        var authBadge = s.auth_ref && s.auth_ref.scheme !== 'none'
+          ? '<span class="svc-badge">' + esc(s.auth_ref.scheme) + ':' + esc(s.auth_ref.env) + '</span>'
+          : '';
+        return '<div class="svc-item">' +
+          '<div class="svc-meta">' +
+            '<span class="svc-name ' + enabledCls + '">' + esc(s.name) + ' <small style="color:var(--text-faint);">(' + esc(s.id) + ')</small></span>' +
+            '<span class="svc-detail">' + esc(s.group) + ' · ' + esc(s.url || '—') + ' ' + authBadge + '</span>' +
+          '</div>' +
+          '<div class="svc-actions">' +
+            '<button class="btn btn-ghost btn-edit" data-id="' + esc(s.id) + '">edit</button>' +
+            '<button class="btn btn-danger btn-del" data-id="' + esc(s.id) + '">delete</button>' +
+          '</div>' +
+        '</div>';
+      }).join('');
+
+      $list.querySelectorAll('.btn-edit').forEach(function (b) {
+        b.addEventListener('click', function () { editService(b.dataset.id); });
+      });
+      $list.querySelectorAll('.btn-del').forEach(function (b) {
+        b.addEventListener('click', function () { deleteService(b.dataset.id); });
+      });
+    }
+
+    function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.appendChild(document.createTextNode(s)); return d.innerHTML; }
+
+    // New
+    document.getElementById('btn-new').addEventListener('click', function () {
+      $form.reset();
+      document.getElementById('f-id').removeAttribute('readonly');
+      $title.textContent = 'add service';
+      $scheme.dispatchEvent(new Event('change'));
+      $secForm.style.display = '';
+    });
+
+    // Cancel
+    document.getElementById('btn-cancel').addEventListener('click', function () {
+      $secForm.style.display = 'none';
+    });
+
+    // Edit
+    function editService(id) {
+      fetch(API_BASE + '/api/admin/services/' + encodeURIComponent(id), { headers: authHeaders() })
+        .then(function (r) { return r.json(); })
+        .then(function (s) {
+          $form.reset();
+          document.getElementById('f-id').value = s.id;
+          document.getElementById('f-id').setAttribute('readonly', true);
+          document.getElementById('f-name').value = s.name || '';
+          document.getElementById('f-group').value = s.group || 'core';
+          document.getElementById('f-url').value = s.url || '';
+          document.getElementById('f-path').value = s.path || '/';
+          document.getElementById('f-icon').value = s.icon || '';
+          document.getElementById('f-desc').value = s.description || '';
+          document.getElementById('f-codes').value = (s.healthy_status_codes || [200]).join(',');
+          document.getElementById('f-enabled').value = s.enabled === false ? 'false' : 'true';
+          if (s.auth_ref && s.auth_ref.scheme !== 'none') {
+            $scheme.value = s.auth_ref.scheme;
+            document.getElementById('f-auth-env').value = s.auth_ref.env || '';
+            document.getElementById('f-header-name').value = s.auth_ref.header_name || '';
+          } else {
+            $scheme.value = 'none';
+          }
+          $scheme.dispatchEvent(new Event('change'));
+          $title.textContent = 'edit service';
+          $secForm.style.display = '';
+        });
+    }
+
+    // Delete
+    function deleteService(id) {
+      if (!confirm('Delete service "' + id + '"?')) return;
+      fetch(API_BASE + '/api/admin/services/' + encodeURIComponent(id), { method: 'DELETE', headers: authHeaders() })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          toast('Deleted ' + id);
+          fetchServices();
+        })
+        .catch(function (err) { toast(err.message, true); });
+    }
+
+    // Save
+    $form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var id = document.getElementById('f-id').value.trim();
+      if (!id) { toast('ID is required', true); return; }
+
+      var codes = document.getElementById('f-codes').value.split(',').map(function (c) { return parseInt(c.trim(), 10); }).filter(function (n) { return !isNaN(n); });
+
+      var body = {
+        id: id,
+        name: document.getElementById('f-name').value.trim(),
+        group: document.getElementById('f-group').value,
+        url: document.getElementById('f-url').value.trim(),
+        path: document.getElementById('f-path').value.trim() || '/',
+        icon: document.getElementById('f-icon').value.trim() || null,
+        description: document.getElementById('f-desc').value.trim() || null,
+        enabled: document.getElementById('f-enabled').value === 'true',
+        healthy_status_codes: codes.length ? codes : [200],
+        auth_ref: null,
+      };
+
+      var scheme = $scheme.value;
+      if (scheme !== 'none') {
+        body.auth_ref = {
+          scheme: scheme,
+          env: document.getElementById('f-auth-env').value.trim(),
+        };
+        if (scheme === 'header') {
+          body.auth_ref.header_name = document.getElementById('f-header-name').value.trim();
+        }
+      }
+
+      fetch(API_BASE + '/api/admin/services/' + encodeURIComponent(id), {
+        method: 'PUT',
+        headers: authHeaders(),
+        body: JSON.stringify(body),
+      })
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (d) { throw new Error(d.detail || 'HTTP ' + r.status); });
+          return r.json();
+        })
+        .then(function () {
+          toast('Saved ' + id);
+          $secForm.style.display = 'none';
+          fetchServices();
+        })
+        .catch(function (err) { toast(err.message, true); });
+    });
+
+  })();
+  </script>
+</body>
+</html>
