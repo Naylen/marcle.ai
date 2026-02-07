@@ -3,12 +3,14 @@
 
   var API_BASE = window.MARCLE_API_BASE || "";
   var ADMIN_URL = API_BASE + "/api/admin/services";
-  var TOKEN_STORAGE_KEY = "marcle_admin_token";
 
   var tokenInput = document.getElementById("admin-token");
-  var saveTokenBtn = document.getElementById("save-token-btn");
   var connectBtn = document.getElementById("connect-btn");
   var createForm = document.getElementById("create-form");
+  var createAuthScheme = document.getElementById("create-auth-scheme");
+  var createAuthEnv = document.getElementById("create-auth-env");
+  var createAuthHeaderWrap = document.getElementById("create-auth-header-wrap");
+  var createAuthHeaderName = document.getElementById("create-auth-header-name");
   var list = document.getElementById("service-list");
   var errorBox = document.getElementById("admin-error");
 
@@ -37,13 +39,8 @@
     };
   }
 
-  function persistToken() {
-    localStorage.setItem(TOKEN_STORAGE_KEY, tokenInput.value.trim());
-  }
-
-  function loadStoredToken() {
-    var stored = localStorage.getItem(TOKEN_STORAGE_KEY) || "";
-    tokenInput.value = stored;
+  function toggleCreateHeaderField() {
+    createAuthHeaderWrap.style.display = createAuthScheme.value === "header" ? "block" : "none";
   }
 
   async function request(url, options) {
@@ -69,6 +66,27 @@
     return el ? el.value.trim() : "";
   }
 
+  function parseAuthRefFields(scheme, env, headerName) {
+    if (!scheme || scheme === "none") return null;
+
+    var ref = {
+      scheme: scheme,
+      env: env || ""
+    };
+
+    if (scheme === "header") {
+      ref.header_name = headerName || "";
+    }
+    return ref;
+  }
+
+  function getAuthRefFromRow(row) {
+    var scheme = getRowValue(row, "[data-auth-field='scheme']");
+    var env = getRowValue(row, "[data-auth-field='env']");
+    var headerName = getRowValue(row, "[data-auth-field='header_name']");
+    return parseAuthRefFields(scheme, env, headerName);
+  }
+
   function collectServiceFromRow(row, existing) {
     return {
       id: existing.id,
@@ -79,23 +97,27 @@
       description: getRowValue(row, "[data-field='description']") || null,
       check_type: getRowValue(row, "[data-field='check_type']"),
       enabled: existing.enabled,
-      auth_ref: existing.auth_ref || null
+      auth_ref: getAuthRefFromRow(row)
     };
+  }
+
+  function credentialSummary(authRef) {
+    if (!authRef || !authRef.scheme || authRef.scheme === "none") return "auth_ref: none";
+    if (authRef.scheme === "header") {
+      return "auth_ref: " + authRef.scheme + " / " + (authRef.env || "") + " / " + (authRef.header_name || "");
+    }
+    return "auth_ref: " + authRef.scheme + " / " + (authRef.env || "");
   }
 
   function serviceRowMarkup(svc) {
     var checked = svc.enabled ? "checked" : "";
-    var authLabel = "none";
-    if (svc.auth_ref && svc.auth_ref.scheme) {
-      authLabel = svc.auth_ref.scheme + " / " + (svc.auth_ref.env || "");
-      if (svc.auth_ref.scheme === "header") {
-        authLabel += " / " + (svc.auth_ref.header_name || "");
-      }
-    }
+    var authRef = svc.auth_ref || {};
+    var authScheme = authRef.scheme || "none";
+    var showHeader = authScheme === "header" ? "block" : "none";
 
     return (
       "<div class='admin-item' data-service-id='" + escapeHtml(svc.id) + "'>" +
-        "<div class='admin-inline'><strong>" + escapeHtml(svc.id) + "</strong> · auth_ref: " + escapeHtml(authLabel) + "</div>" +
+        "<div class='admin-inline'><strong>" + escapeHtml(svc.id) + "</strong> · " + escapeHtml(credentialSummary(svc.auth_ref)) + "</div>" +
         "<div class='admin-grid'>" +
           "<div><label class='admin-label'>Name</label><input class='admin-input' data-field='name' value='" + escapeHtml(svc.name) + "'></div>" +
           "<div><label class='admin-label'>Group</label>" +
@@ -109,6 +131,18 @@
           "<div><label class='admin-label'>URL</label><input class='admin-input' data-field='url' value='" + escapeHtml(svc.url) + "'></div>" +
           "<div><label class='admin-label'>Icon</label><input class='admin-input' data-field='icon' value='" + escapeHtml(svc.icon || "") + "'></div>" +
           "<div><label class='admin-label'>Description</label><input class='admin-input' data-field='description' value='" + escapeHtml(svc.description || "") + "'></div>" +
+        "</div>" +
+        "<div class='admin-grid'>" +
+          "<div><label class='admin-label'>Auth scheme</label>" +
+            "<select class='admin-select' data-auth-field='scheme'>" +
+              "<option value='none'" + (authScheme === "none" ? " selected" : "") + ">none</option>" +
+              "<option value='bearer'" + (authScheme === "bearer" ? " selected" : "") + ">bearer</option>" +
+              "<option value='basic'" + (authScheme === "basic" ? " selected" : "") + ">basic</option>" +
+              "<option value='header'" + (authScheme === "header" ? " selected" : "") + ">header</option>" +
+            "</select>" +
+          "</div>" +
+          "<div><label class='admin-label'>Auth env var name</label><input class='admin-input' data-auth-field='env' value='" + escapeHtml(authRef.env || "") + "'></div>" +
+          "<div data-auth-header-wrap='1' style='display:" + showHeader + ";'><label class='admin-label'>Header name</label><input class='admin-input' data-auth-field='header_name' value='" + escapeHtml(authRef.header_name || "") + "'></div>" +
         "</div>" +
         "<div class='admin-actions'>" +
           "<button class='admin-button' type='button' data-action='save'>Save</button>" +
@@ -149,7 +183,12 @@
       icon: String(formData.get("icon") || "").trim() || null,
       description: String(formData.get("description") || "").trim() || null,
       check_type: String(formData.get("check_type") || "").trim(),
-      enabled: true
+      enabled: true,
+      auth_ref: parseAuthRefFields(
+        createAuthScheme.value,
+        createAuthEnv.value.trim(),
+        createAuthHeaderName.value.trim()
+      )
     };
   }
 
@@ -161,12 +200,8 @@
     }
   });
 
-  saveTokenBtn.addEventListener("click", function () {
-    persistToken();
-    showError("");
-  });
-
-  tokenInput.addEventListener("change", persistToken);
+  createAuthScheme.addEventListener("change", toggleCreateHeaderField);
+  toggleCreateHeaderField();
 
   createForm.addEventListener("submit", async function (evt) {
     evt.preventDefault();
@@ -178,6 +213,8 @@
         body: JSON.stringify(service)
       });
       createForm.reset();
+      createAuthScheme.value = "none";
+      toggleCreateHeaderField();
       await loadServices();
     } catch (err) {
       showError(err.message);
@@ -225,5 +262,13 @@
     }
   });
 
-  loadStoredToken();
+  list.addEventListener("change", function (evt) {
+    var schemeSelect = evt.target.closest("[data-auth-field='scheme']");
+    if (!schemeSelect) return;
+    var row = schemeSelect.closest("[data-service-id]");
+    if (!row) return;
+    var wrap = row.querySelector("[data-auth-header-wrap='1']");
+    if (!wrap) return;
+    wrap.style.display = schemeSelect.value === "header" ? "block" : "none";
+  });
 })();

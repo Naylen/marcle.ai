@@ -93,3 +93,11 @@ class ServiceConfig(BaseModel):
 
 class ServicesConfigResponse(BaseModel):
     services: list[ServiceConfig]
+
+
+class AdminServiceConfig(ServiceConfig):
+    credential_present: Optional[bool] = None
+
+
+class AdminServicesConfigResponse(BaseModel):
+    services: list[AdminServiceConfig]

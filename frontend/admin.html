@@ -29,9 +29,8 @@
     <div class="admin-panel">
       <label class="admin-label" for="admin-token">Admin token</label>
       <input id="admin-token" class="admin-input" type="password" autocomplete="off" placeholder="Bearer token">
-      <div class="admin-help">Used only for admin API calls from this page. Saved in local storage on this browser.</div>
+      <div class="admin-help">Used only for admin API calls from this page.</div>
       <div class="admin-actions" style="margin-top:0.75rem;">
-        <button id="save-token-btn" class="admin-button" type="button">Save token</button>
         <button id="connect-btn" class="admin-button" type="button">Load services</button>
       </div>
       <div id="admin-error" class="admin-error" style="margin-top:0.75rem;"></div>
@@ -55,13 +54,33 @@
           <div><label class="admin-label">Icon</label><input name="icon" class="admin-input"></div>
           <div><label class="admin-label">Description</label><input name="description" class="admin-input"></div>
         </div>
+        <div class="admin-grid" style="margin-top:0.75rem;">
+          <div>
+            <label class="admin-label">Auth scheme</label>
+            <select id="create-auth-scheme" name="auth_scheme" class="admin-select">
+              <option value="none">none</option>
+              <option value="bearer">bearer</option>
+              <option value="basic">basic</option>
+              <option value="header">header</option>
+            </select>
+          </div>
+          <div>
+            <label class="admin-label">Auth env var name</label>
+            <input id="create-auth-env" name="auth_env" class="admin-input" placeholder="PROXMOX_API_TOKEN">
+          </div>
+          <div id="create-auth-header-wrap" style="display:none;">
+            <label class="admin-label">Header name</label>
+            <input id="create-auth-header-name" name="auth_header_name" class="admin-input" placeholder="X-Api-Key">
+          </div>
+        </div>
+        <div class="admin-help">Set the secret value in backend <code>.env</code> under the given env var name.</div>
         <button class="admin-button" type="submit" style="margin-top:0.75rem;">Create service</button>
       </form>
     </div>
 
     <div class="admin-panel">
       <h2 style="font-family:var(--font-mono);font-size:0.9rem;margin-bottom:0.75rem;">Configured services</h2>
-      <div class="admin-help" style="margin-bottom:0.75rem;">Edit metadata inline, then save. Enable/disable uses toggle endpoint.</div>
+      <div class="admin-help" style="margin-bottom:0.75rem;">Edit metadata and auth_ref (scheme/env/header_name) inline, then save.</div>
       <div id="service-list" class="admin-list"></div>
     </div>
   </div>

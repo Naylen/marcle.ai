@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import os
 import time
 from datetime import datetime, timezone
 
@@ -10,7 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.cache import cache
 from app.config_store import config_store
-from app.models import OverallStatus, ServiceConfig, ServicesConfigResponse, Status, StatusResponse
+from app.models import (
+    AdminServiceConfig,
+    AdminServicesConfigResponse,
+    AuthRef,
+    OverallStatus,
+    ServiceConfig,
+    Status,
+    StatusResponse,
+)
 from app.services import http_check
 from app import config
 
@@ -150,22 +159,39 @@ def _require_admin(authorization: str = Header(default="")) -> None:
         )
 
 
-@app.get("/api/admin/services", response_model=ServicesConfigResponse)
+def _credential_present(auth_ref: AuthRef | None) -> bool | None:
+    if auth_ref is None or auth_ref.scheme == "none":
+        return None
+    env_name = (auth_ref.env or "").strip()
+    if not env_name:
+        return False
+    value = os.getenv(env_name)
+    return bool(value and value.strip())
+
+
+def _to_admin_service(service: ServiceConfig) -> AdminServiceConfig:
+    payload = service.model_dump(mode="python")
+    payload["credential_present"] = _credential_present(service.auth_ref)
+    return AdminServiceConfig.model_validate(payload)
+
+
+@app.get("/api/admin/services", response_model=AdminServicesConfigResponse)
 async def list_admin_services(_: None = Depends(_require_admin)):
-    return ServicesConfigResponse(services=config_store.list_services())
+    services = [_to_admin_service(service) for service in config_store.list_services()]
+    return AdminServicesConfigResponse(services=services)
 
 
-@app.post("/api/admin/services", response_model=ServiceConfig, status_code=status.HTTP_201_CREATED)
+@app.post("/api/admin/services", response_model=AdminServiceConfig, status_code=status.HTTP_201_CREATED)
 async def create_admin_service(service: ServiceConfig, _: None = Depends(_require_admin)):
     try:
         config_store.create_service(service)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
     cache.clear()
-    return service
+    return _to_admin_service(service)
 
 
-@app.put("/api/admin/services/{service_id}", response_model=ServiceConfig)
+@app.put("/api/admin/services/{service_id}", response_model=AdminServiceConfig)
 async def upsert_admin_service(
     service_id: str,
     service: ServiceConfig,
@@ -175,25 +201,25 @@ async def upsert_admin_service(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id must match body id")
     config_store.upsert_service(service)
     cache.clear()
-    return service
+    return _to_admin_service(service)
 
 
-@app.delete("/api/admin/services/{service_id}", response_model=ServiceConfig)
+@app.delete("/api/admin/services/{service_id}", response_model=AdminServiceConfig)
 async def delete_admin_service(service_id: str, _: None = Depends(_require_admin)):
     removed = config_store.delete_service(service_id)
     if removed is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
     cache.clear()
-    return removed
+    return _to_admin_service(removed)
 
 
-@app.post("/api/admin/services/{service_id}/toggle", response_model=ServiceConfig)
+@app.post("/api/admin/services/{service_id}/toggle", response_model=AdminServiceConfig)
 async def toggle_admin_service(service_id: str, _: None = Depends(_require_admin)):
     updated = config_store.toggle_service(service_id)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
     cache.clear()
-    return updated
+    return _to_admin_service(updated)
 
 
 @app.get("/healthz")

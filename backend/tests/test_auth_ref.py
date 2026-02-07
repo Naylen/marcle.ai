@@ -116,4 +116,5 @@ def test_admin_services_returns_auth_ref_metadata_without_secret_values(monkeypa
     payload = response.json()
     assert payload["services"][0]["auth_ref"]["scheme"] == "bearer"
     assert payload["services"][0]["auth_ref"]["env"] == "AUTH_TEST_TOKEN"
+    assert payload["services"][0]["credential_present"] is True
     assert "do-not-leak-this" not in response.text
