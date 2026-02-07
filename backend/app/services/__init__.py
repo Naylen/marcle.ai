@@ -2,12 +2,13 @@
 
 import time
 import logging
-from typing import Optional
+from typing import Optional, Iterable
 
 import httpx
 
 from app import config
-from app.models import ServiceStatus, Status, ServiceGroup
+from app.auth import MissingCredentialError, build_auth_headers
+from app.models import AuthRef, ServiceStatus, Status, ServiceGroup
 
 logger = logging.getLogger("marcle.services")
 
@@ -22,10 +23,11 @@ async def http_check(
     url: str,
     path: str = "/",
     headers: Optional[dict] = None,
+    auth_ref: Optional[AuthRef] = None,
     verify_ssl: bool = False,
     description: Optional[str] = None,
     icon: Optional[str] = None,
-    healthy_status_codes: set[int] = {200},
+    healthy_status_codes: Optional[Iterable[int]] = None,
 ) -> ServiceStatus:
     """Generic HTTP health check. Returns ServiceStatus, never raises."""
     if not url:
@@ -35,13 +37,30 @@ async def http_check(
         )
 
     full_url = url.rstrip("/") + path
+    expected_codes = set(healthy_status_codes or {200})
+
+    request_headers = dict(headers or {})
+    try:
+        request_headers.update(build_auth_headers(auth_ref))
+    except MissingCredentialError as exc:
+        logger.warning("Missing credential env var for %s: %s", id, exc.env_name)
+        return ServiceStatus(
+            id=id,
+            name=name,
+            group=group,
+            status=Status.UNKNOWN,
+            url=url,
+            description=description,
+            icon=icon,
+        )
+
     start = time.monotonic()
     try:
         async with httpx.AsyncClient(verify=verify_ssl, timeout=TIMEOUT) as client:
-            resp = await client.get(full_url, headers=headers or {})
+            resp = await client.get(full_url, headers=request_headers)
         latency = int((time.monotonic() - start) * 1000)
 
-        status = Status.HEALTHY if resp.status_code in healthy_status_codes else Status.DEGRADED
+        status = Status.HEALTHY if resp.status_code in expected_codes else Status.DEGRADED
 
         return ServiceStatus(
             id=id, name=name, group=group, status=status,

@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>marcle.ai admin</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .admin-wrap { max-width: 64rem; margin: 6rem auto 4rem; padding: 0 1rem; }
+    .admin-panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
+    .admin-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
+    .admin-label { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.35rem; }
+    .admin-input, .admin-select, .admin-button {
+      width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0.5rem 0.6rem;
+      font-family: var(--font-mono); font-size: 0.8rem;
+    }
+    .admin-button { cursor: pointer; }
+    .admin-button:hover { border-color: var(--text-dim); }
+    .admin-help { color: var(--text-faint); font-family: var(--font-mono); font-size: 0.7rem; margin-top: 0.5rem; }
+    .admin-list { display: grid; gap: 0.5rem; }
+    .admin-item { border: 1px solid var(--border); border-radius: 4px; padding: 0.6rem; background: var(--surface); }
+    .admin-item code { margin-right: 0.4rem; }
+  </style>
+</head>
+<body>
+  <div class="admin-wrap">
+    <div class="admin-panel">
+      <label class="admin-label" for="admin-token">Admin token</label>
+      <input id="admin-token" class="admin-input" type="password" autocomplete="off" placeholder="Bearer token">
+      <div class="admin-help">Used only for admin API calls from this page.</div>
+      <button id="connect-btn" class="admin-button" style="margin-top:0.75rem;">Load services</button>
+    </div>
+
+    <div class="admin-panel">
+      <h2 style="font-family:var(--font-mono);font-size:0.9rem;margin-bottom:0.75rem;">Service editor</h2>
+      <form id="service-form">
+        <div class="admin-grid">
+          <div><label class="admin-label">ID</label><input name="id" class="admin-input" required></div>
+          <div><label class="admin-label">Name</label><input name="name" class="admin-input" required></div>
+          <div><label class="admin-label">Group</label>
+            <select name="group" class="admin-select">
+              <option value="core">core</option>
+              <option value="media">media</option>
+              <option value="automation">automation</option>
+            </select>
+          </div>
+          <div><label class="admin-label">Check type</label><input name="check_type" class="admin-input" required></div>
+          <div><label class="admin-label">URL</label><input name="url" class="admin-input" required></div>
+          <div><label class="admin-label">Icon</label><input name="icon" class="admin-input"></div>
+        </div>
+
+        <div class="admin-grid" style="margin-top:0.75rem;">
+          <div>
+            <label class="admin-label">Auth scheme</label>
+            <select id="auth-scheme" name="auth_scheme" class="admin-select">
+              <option value="none">none</option>
+              <option value="bearer">bearer</option>
+              <option value="basic">basic</option>
+              <option value="header">header</option>
+            </select>
+          </div>
+          <div>
+            <label class="admin-label">Auth env var name</label>
+            <input id="auth-env" name="auth_env" class="admin-input" placeholder="PROXMOX_API_TOKEN">
+          </div>
+          <div id="header-name-wrap" style="display:none;">
+            <label class="admin-label">Header name</label>
+            <input id="auth-header-name" name="auth_header_name" class="admin-input" placeholder="X-Api-Key">
+          </div>
+        </div>
+
+        <div class="admin-help">Set the actual secret in backend <code>.env</code> as the named env var. Never store secret values in services.json.</div>
+        <button class="admin-button" type="submit" style="margin-top:0.75rem;">Save service (PUT)</button>
+      </form>
+    </div>
+
+    <div class="admin-panel">
+      <h2 style="font-family:var(--font-mono);font-size:0.9rem;margin-bottom:0.75rem;">Configured services</h2>
+      <div id="service-list" class="admin-list"></div>
+    </div>
+  </div>
+  <script src="admin.js"></script>
+</body>
+</html>

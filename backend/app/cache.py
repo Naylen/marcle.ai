@@ -23,5 +23,9 @@ class StatusCache:
         self._data = data
         self._timestamp = time.monotonic()
 
+    def clear(self) -> None:
+        self._data = None
+        self._timestamp = 0.0
+
 
 cache = StatusCache()

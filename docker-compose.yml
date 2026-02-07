@@ -12,6 +12,10 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - SERVICES_CONFIG_PATH=/data/services.json
+    volumes:
+      - ./data:/data
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/healthz')"]
       interval: 30s
