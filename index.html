@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>marcle.ai</title>
+  <meta name="description" content="Systems engineering lab. Infrastructure, automation, and experimentation.">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,300&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="grain"></div>
+
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="/" class="wordmark">marcle<span class="dot">.</span>ai</a>
+      <nav class="header-nav">
+        <a href="#systems" class="nav-link">systems</a>
+        <a href="#status" class="nav-link">status</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-label">homelab / systems engineering</div>
+        <h1 class="hero-title">
+          Infrastructure as<br>
+          a practice.
+        </h1>
+        <p class="hero-sub">
+          A personal environment for building, breaking, and understanding
+          the systems that run everything else. Self-hosted. Self-managed.
+          Deliberately overbuilt.
+        </p>
+        <div class="hero-meta">
+          <span class="meta-item"><span class="meta-dot healthy"></span> systems operational</span>
+          <span class="meta-sep">·</span>
+          <span class="meta-item" id="service-count">— services tracked</span>
+        </div>
+      </div>
+    </section>
+
+    <section class="divider-section">
+      <div class="divider-line"></div>
+    </section>
+
+    <section id="systems" class="systems-section">
+      <div class="section-inner">
+        <div class="section-label">what runs here</div>
+        <div class="systems-grid">
+          <div class="system-group">
+            <h3 class="group-title">core</h3>
+            <p class="group-desc">
+              Proxmox virtualisation, UniFi networking, and Home Assistant
+              form the substrate. Everything else depends on these.
+            </p>
+          </div>
+          <div class="system-group">
+            <h3 class="group-title">media</h3>
+            <p class="group-desc">
+              Plex, the *arr stack, Overseerr, Tautulli. Request-driven
+              media management with full automation from request to playback.
+            </p>
+          </div>
+          <div class="system-group">
+            <h3 class="group-title">automation</h3>
+            <p class="group-desc">
+              n8n for workflow orchestration. Ollama for local inference.
+              The interesting part of the lab — where things get experimental.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="divider-section">
+      <div class="divider-line"></div>
+    </section>
+
+    <section id="status" class="status-section">
+      <div class="section-inner">
+        <div class="section-label">service status</div>
+        <div id="status-grid" class="status-grid">
+          <div class="status-placeholder">Loading status data&hellip;</div>
+        </div>
+        <p class="status-note">
+          Status checks run every 30–60 seconds. Data sourced from
+          <code>/api/status</code>.
+        </p>
+      </div>
+    </section>
+
+    <section class="divider-section">
+      <div class="divider-line"></div>
+    </section>
+
+    <section class="about-section">
+      <div class="section-inner">
+        <div class="section-label">about</div>
+        <p class="about-text">
+          This is a working environment, not a portfolio piece. It exists
+          because understanding infrastructure means running infrastructure —
+          with all the maintenance, failure modes, and late-night debugging
+          that implies.
+        </p>
+        <p class="about-text">
+          Everything here is self-hosted on commodity hardware, tunneled
+          through Cloudflare, and managed with the kind of care usually
+          reserved for things that matter.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span class="footer-wordmark">marcle.ai</span>
+      <span class="footer-sep">—</span>
+      <span class="footer-note">built with intent</span>
+    </div>
+  </footer>
+
+  <script src="status.js"></script>
+</body>
+</html>
