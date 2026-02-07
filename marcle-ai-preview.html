@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>marcle.ai</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&family=Source+Serif+4:ital,opsz,wght@0,8..60,300;0,8..60,400;0,8..60,600;1,8..60,300&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg:#0c0c0e;--bg-raised:#141417;--surface:#1a1a1f;--border:#2a2a30;
+      --text:#d4d4d8;--text-dim:#71717a;--text-faint:#3f3f46;--accent:#a1a1aa;
+      --green:#4ade80;--yellow:#facc15;--red:#f87171;--blue:#60a5fa;
+      --font-mono:'JetBrains Mono','SF Mono',monospace;
+      --font-serif:'Source Serif 4','Georgia',serif;
+      --space-xs:.5rem;--space-sm:1rem;--space-md:2rem;--space-lg:4rem;--space-xl:8rem;
+      --max-width:64rem;
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{font-size:16px;-webkit-font-smoothing:antialiased}
+    body{background:var(--bg);color:var(--text);font-family:var(--font-serif);font-weight:300;line-height:1.7;overflow-x:hidden}
+    a{color:inherit;text-decoration:none}
+    code{font-family:var(--font-mono);font-size:.85em;background:var(--surface);padding:.15em .4em;border-radius:3px;color:var(--accent)}
+    .grain{position:fixed;inset:0;pointer-events:none;z-index:9999;opacity:.035;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");background-size:200px}
+    .site-header{position:fixed;top:0;left:0;right:0;z-index:100;background:rgba(12,12,14,.85);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--border)}
+    .header-inner{max-width:var(--max-width);margin:0 auto;padding:var(--space-sm) var(--space-md);display:flex;align-items:center;justify-content:space-between}
+    .wordmark{font-family:var(--font-mono);font-size:1rem;font-weight:500;letter-spacing:-.02em}
+    .wordmark .dot{color:var(--text-dim)}
+    .header-nav{display:flex;gap:var(--space-md)}
+    .nav-link{font-family:var(--font-mono);font-size:.8rem;color:var(--text-dim);letter-spacing:.04em;transition:color .2s}
+    .nav-link:hover{color:var(--text)}
+    .hero{min-height:100vh;display:flex;align-items:center;padding:var(--space-xl) var(--space-md) var(--space-lg)}
+    .hero-inner{max-width:var(--max-width);margin:0 auto;width:100%}
+    .hero-label{font-family:var(--font-mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;color:var(--text-dim);margin-bottom:var(--space-md);opacity:0;animation:fadeUp .8s ease .2s forwards}
+    .hero-title{font-family:var(--font-serif);font-size:clamp(2.5rem,6vw,4.5rem);font-weight:300;line-height:1.15;letter-spacing:-.03em;margin-bottom:var(--space-md);opacity:0;animation:fadeUp .8s ease .4s forwards}
+    .hero-sub{max-width:38rem;font-size:1.125rem;color:var(--text-dim);line-height:1.75;opacity:0;animation:fadeUp .8s ease .6s forwards}
+    .hero-meta{margin-top:var(--space-lg);font-family:var(--font-mono);font-size:.75rem;color:var(--text-dim);display:flex;align-items:center;gap:var(--space-sm);opacity:0;animation:fadeUp .8s ease .8s forwards}
+    .meta-dot{display:inline-block;width:6px;height:6px;border-radius:50%;margin-right:.4em;position:relative;top:-1px}
+    .meta-dot.healthy{background:var(--green);box-shadow:0 0 8px rgba(74,222,128,.4)}
+    .meta-dot.degraded{background:var(--yellow);box-shadow:0 0 8px rgba(250,204,21,.4)}
+    .meta-sep{color:var(--text-faint)}
+    .section-inner{max-width:var(--max-width);margin:0 auto;padding:var(--space-xl) var(--space-md)}
+    .section-label{font-family:var(--font-mono);font-size:.7rem;text-transform:uppercase;letter-spacing:.14em;color:var(--text-faint);margin-bottom:var(--space-lg)}
+    .divider-section{max-width:var(--max-width);margin:0 auto;padding:0 var(--space-md)}
+    .divider-line{height:1px;background:var(--border)}
+    .systems-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:var(--space-lg)}
+    .group-title{font-family:var(--font-mono);font-size:.85rem;font-weight:500;letter-spacing:.06em;color:var(--accent);margin-bottom:var(--space-sm)}
+    .group-desc{font-size:.95rem;color:var(--text-dim);line-height:1.75}
+    .status-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(16rem,1fr));gap:1px;background:var(--border);border:1px solid var(--border);border-radius:4px;overflow:hidden}
+    .status-card{background:var(--bg-raised);padding:var(--space-sm) calc(var(--space-sm) + .25rem);display:flex;flex-direction:column;gap:.35rem;transition:background .15s}
+    .status-card:hover{background:var(--surface)}
+    .status-card-header{display:flex;align-items:center;justify-content:space-between}
+    .status-card-name{font-family:var(--font-mono);font-size:.8rem;font-weight:400}
+    .status-indicator{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+    .status-indicator.healthy{background:var(--green)}
+    .status-indicator.degraded{background:var(--yellow)}
+    .status-indicator.down{background:var(--red)}
+    .status-indicator.unknown{background:var(--text-faint)}
+    .status-card-detail{font-family:var(--font-mono);font-size:.65rem;color:var(--text-faint);letter-spacing:.02em}
+    .status-note{margin-top:var(--space-md);font-family:var(--font-mono);font-size:.7rem;color:var(--text-faint)}
+    .about-text{max-width:42rem;font-size:1.05rem;color:var(--text-dim);line-height:1.8;margin-bottom:var(--space-sm)}
+    .about-text:last-child{margin-bottom:0}
+    .site-footer{border-top:1px solid var(--border);padding:var(--space-md)}
+    .footer-inner{max-width:var(--max-width);margin:0 auto;display:flex;align-items:center;gap:var(--space-sm);font-family:var(--font-mono);font-size:.7rem;color:var(--text-faint)}
+    .footer-wordmark{color:var(--text-dim)}
+    @keyframes fadeUp{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @media(max-width:640px){.hero{min-height:85vh;padding-top:6rem}.systems-grid{grid-template-columns:1fr}.status-grid{grid-template-columns:1fr}.section-inner{padding:var(--space-lg) var(--space-sm)}}
+  </style>
+</head>
+<body>
+  <div class="grain"></div>
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="/" class="wordmark">marcle<span class="dot">.</span>ai</a>
+      <nav class="header-nav">
+        <a href="#systems" class="nav-link">systems</a>
+        <a href="#status" class="nav-link">status</a>
+      </nav>
+    </div>
+  </header>
+  <main>
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-label">homelab / systems engineering</div>
+        <h1 class="hero-title">Infrastructure as<br>a practice.</h1>
+        <p class="hero-sub">A personal environment for building, breaking, and understanding the systems that run everything else. Self-hosted. Self-managed. Deliberately overbuilt.</p>
+        <div class="hero-meta">
+          <span class="meta-item"><span class="meta-dot healthy"></span> systems operational</span>
+          <span class="meta-sep">·</span>
+          <span class="meta-item">10 services tracked</span>
+        </div>
+      </div>
+    </section>
+    <section class="divider-section"><div class="divider-line"></div></section>
+    <section id="systems" class="systems-section">
+      <div class="section-inner">
+        <div class="section-label">what runs here</div>
+        <div class="systems-grid">
+          <div class="system-group">
+            <h3 class="group-title">core</h3>
+            <p class="group-desc">Proxmox virtualisation, UniFi networking, and Home Assistant form the substrate. Everything else depends on these.</p>
+          </div>
+          <div class="system-group">
+            <h3 class="group-title">media</h3>
+            <p class="group-desc">Plex, the *arr stack, Overseerr, Tautulli. Request-driven media management with full automation from request to playback.</p>
+          </div>
+          <div class="system-group">
+            <h3 class="group-title">automation</h3>
+            <p class="group-desc">n8n for workflow orchestration. Ollama for local inference. The interesting part of the lab — where things get experimental.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="divider-section"><div class="divider-line"></div></section>
+    <section id="status" class="status-section">
+      <div class="section-inner">
+        <div class="section-label">service status</div>
+        <div id="status-grid" class="status-grid">
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Proxmox</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">core · 12ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">UniFi Network</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">core · 8ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">UniFi Protect</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">core · 15ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Home Assistant</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">core · 6ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Plex</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">media · 22ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Overseerr</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">media · 18ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Tautulli</span><span class="status-indicator degraded"></span></div><span class="status-card-detail">media · 340ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Arr Stack</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">media · 31ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">Ollama</span><span class="status-indicator healthy"></span></div><span class="status-card-detail">automation · 45ms</span></div>
+          <div class="status-card"><div class="status-card-header"><span class="status-card-name">n8n</span><span class="status-indicator down"></span></div><span class="status-card-detail">automation · —</span></div>
+        </div>
+        <p class="status-note">Status checks run every 30–60 seconds. Data sourced from <code>/api/status</code>.</p>
+      </div>
+    </section>
+    <section class="divider-section"><div class="divider-line"></div></section>
+    <section class="about-section">
+      <div class="section-inner">
+        <div class="section-label">about</div>
+        <p class="about-text">This is a working environment, not a portfolio piece. It exists because understanding infrastructure means running infrastructure — with all the maintenance, failure modes, and late-night debugging that implies.</p>
+        <p class="about-text">Everything here is self-hosted on commodity hardware, tunneled through Cloudflare, and managed with the kind of care usually reserved for things that matter.</p>
+      </div>
+    </section>
+  </main>
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span class="footer-wordmark">marcle.ai</span>
+      <span class="footer-sep">—</span>
+      <span class="footer-note">built with intent</span>
+    </div>
+  </footer>
+</body>
+</html>
