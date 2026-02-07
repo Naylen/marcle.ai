@@ -7,7 +7,7 @@ from typing import Optional, Iterable
 import httpx
 
 from app import config
-from app.auth import MissingCredentialError, build_auth_headers
+from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers
 from app.models import AuthRef, ServiceStatus, Status, ServiceGroup
 
 logger = logging.getLogger("marcle.services")
@@ -44,6 +44,17 @@ async def http_check(
         request_headers.update(build_auth_headers(auth_ref))
     except MissingCredentialError as exc:
         logger.warning("Missing credential env var for %s: %s", id, exc.env_name)
+        return ServiceStatus(
+            id=id,
+            name=name,
+            group=group,
+            status=Status.UNKNOWN,
+            url=url,
+            description=description,
+            icon=icon,
+        )
+    except InvalidCredentialFormatError as exc:
+        logger.warning("Invalid %s credential format for %s in %s", exc.scheme, id, exc.env_name)
         return ServiceStatus(
             id=id,
             name=name,

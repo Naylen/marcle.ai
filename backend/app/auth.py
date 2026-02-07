@@ -12,6 +12,13 @@ class MissingCredentialError(Exception):
         self.env_name = env_name
 
 
+class InvalidCredentialFormatError(Exception):
+    def __init__(self, env_name: str, scheme: str):
+        super().__init__(f"Invalid credential format for scheme '{scheme}' in env var: {env_name}")
+        self.env_name = env_name
+        self.scheme = scheme
+
+
 def build_auth_headers(auth_ref: AuthRef | None) -> dict[str, str]:
     if auth_ref is None or auth_ref.scheme == "none":
         return {}
@@ -24,6 +31,8 @@ def build_auth_headers(auth_ref: AuthRef | None) -> dict[str, str]:
     if auth_ref.scheme == "bearer":
         return {"Authorization": f"Bearer {value}"}
     if auth_ref.scheme == "basic":
+        if ":" not in value:
+            raise InvalidCredentialFormatError(env_name, "basic")
         basic = base64.b64encode(value.encode("utf-8")).decode("ascii")
         return {"Authorization": f"Basic {basic}"}
     if auth_ref.scheme == "header":

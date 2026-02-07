@@ -1,7 +1,7 @@
 """UniFi Network and Protect health checks."""
 
 from app import config
-from app.models import ServiceStatus, ServiceGroup
+from app.models import AuthRef, ServiceGroup, ServiceStatus
 from app.services import http_check
 
 
@@ -19,17 +19,13 @@ async def check_unifi_network() -> ServiceStatus:
 
 
 async def check_unifi_protect() -> ServiceStatus:
-    headers = {}
-    if config.UNIFI_PROTECT_API_KEY:
-        headers["Authorization"] = f"Bearer {config.UNIFI_PROTECT_API_KEY}"
-
     return await http_check(
         id="unifi-protect",
         name="UniFi Protect",
         group=ServiceGroup.CORE,
         url=config.UNIFI_PROTECT_URL,
         path="/proxy/protect/api",
-        headers=headers,
+        auth_ref=AuthRef(scheme="bearer", env="UNIFI_API_KEY"),
         description="Camera surveillance",
         icon="unifi-protect.svg",
     )

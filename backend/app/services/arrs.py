@@ -4,40 +4,32 @@ import asyncio
 import logging
 
 from app import config
-from app.models import ServiceStatus, ServiceGroup, Status
+from app.models import AuthRef, ServiceGroup, ServiceStatus, Status
 from app.services import http_check
 
 logger = logging.getLogger("marcle.services.arrs")
 
 
 async def _check_radarr() -> ServiceStatus:
-    headers = {}
-    if config.RADARR_API_KEY:
-        headers["X-Api-Key"] = config.RADARR_API_KEY
-
     return await http_check(
         id="radarr",
         name="Radarr",
         group=ServiceGroup.MEDIA,
         url=config.RADARR_URL,
         path="/api/v3/health",
-        headers=headers,
+        auth_ref=AuthRef(scheme="header", env="RADARR_API_KEY", header_name="X-Api-Key"),
         icon="radarr.svg",
     )
 
 
 async def _check_sonarr() -> ServiceStatus:
-    headers = {}
-    if config.SONARR_API_KEY:
-        headers["X-Api-Key"] = config.SONARR_API_KEY
-
     return await http_check(
         id="sonarr",
         name="Sonarr",
         group=ServiceGroup.MEDIA,
         url=config.SONARR_URL,
         path="/api/v3/health",
-        headers=headers,
+        auth_ref=AuthRef(scheme="header", env="SONARR_API_KEY", header_name="X-Api-Key"),
         icon="sonarr.svg",
     )
 

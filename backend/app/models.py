@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal, Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class ServiceGroup(str, Enum):
@@ -49,11 +49,29 @@ class AuthRef(BaseModel):
     env: Optional[str] = None
     header_name: Optional[str] = None
 
+    @field_validator("env", "header_name", mode="before")
+    @classmethod
+    def normalize_optional_string(cls, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            return stripped or None
+        return value
+
     @model_validator(mode="after")
     def validate_auth_ref(self):
-        if self.scheme == "header" and not (self.header_name or "").strip():
+        if self.scheme == "none":
+            self.env = None
+            self.header_name = None
+            return self
+
+        if self.scheme == "header" and not self.header_name:
             raise ValueError("header_name is required when scheme='header'")
-        if self.scheme != "none" and not (self.env or "").strip():
+        if self.scheme != "header":
+            self.header_name = None
+
+        if not self.env:
             raise ValueError("env is required when scheme is not 'none'")
         return self
 

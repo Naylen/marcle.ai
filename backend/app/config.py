@@ -8,14 +8,11 @@ ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
 
 # Proxmox
 PROXMOX_URL: str = os.getenv("PROXMOX_URL", "")
-PROXMOX_TOKEN_ID: str = os.getenv("PROXMOX_TOKEN_ID", "")
-PROXMOX_TOKEN_SECRET: str = os.getenv("PROXMOX_TOKEN_SECRET", "")
 PROXMOX_API_TOKEN: str = os.getenv("PROXMOX_API_TOKEN", "")
 
 # UniFi
 UNIFI_URL: str = os.getenv("UNIFI_URL", "")
 UNIFI_PROTECT_URL: str = os.getenv("UNIFI_PROTECT_URL", "")
-UNIFI_PROTECT_API_KEY: str = os.getenv("UNIFI_PROTECT_API_KEY", "")
 UNIFI_API_KEY: str = os.getenv("UNIFI_API_KEY", "")
 
 # Home Assistant
