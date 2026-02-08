@@ -1,6 +1,7 @@
 import asyncio
 from types import SimpleNamespace
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -97,6 +98,35 @@ def test_status_sends_bearer_header_when_auth_env_exists(monkeypatch):
     assert captured_headers["Authorization"] == "Bearer super-secret-token"
 
 
+def test_status_sends_query_param_when_auth_env_exists(monkeypatch):
+    service = _service_with_auth(AuthRef(scheme="query_param", env="AUTH_TEST_TOKEN", param_name="apikey"))
+    monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
+    monkeypatch.setenv("AUTH_TEST_TOKEN", "query-secret-token")
+
+    captured_params = {}
+
+    class CaptureAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            captured_params.update(kwargs.get("params") or {})
+            return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr("app.services.httpx.AsyncClient", CaptureAsyncClient)
+
+    _reset_state()
+    payload, *_ = asyncio.run(main_module._refresh_once())
+    assert payload["services"][0]["status"] == "healthy"
+    assert captured_params["apikey"] == "query-secret-token"
+
+
 def test_admin_services_returns_auth_ref_metadata_without_secret_values(monkeypatch):
     service = _service_with_auth(AuthRef(scheme="bearer", env="AUTH_TEST_TOKEN"))
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
@@ -116,3 +146,12 @@ def test_admin_services_returns_auth_ref_metadata_without_secret_values(monkeypa
     assert payload["services"][0]["auth_ref"]["env"] == "AUTH_TEST_TOKEN"
     assert payload["services"][0]["credential_present"] is True
     assert "do-not-leak-this" not in response.text
+
+
+def test_auth_ref_query_param_requires_param_name():
+    with pytest.raises(ValueError):
+        AuthRef(scheme="query_param", env="SOME_ENV")
+
+    auth_ref = AuthRef(scheme="query_param", env="SOME_ENV", param_name="apikey")
+    assert auth_ref.param_name == "apikey"
+    assert auth_ref.header_name is None

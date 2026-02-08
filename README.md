@@ -111,6 +111,7 @@ Supported auth schemes:
 - `bearer` → `Authorization: Bearer <ENV_VALUE>`
 - `basic` → `Authorization: Basic base64(user:pass)` where env value is `USER:PASS`
 - `header` → custom `<header_name>: <ENV_VALUE>`
+- `query_param` → appends `<param_name>=<ENV_VALUE>` to the request URL query string
 
 Never put token/password values into `services.json`.
 Set actual secret values only in backend environment variables (`.env`/container env).

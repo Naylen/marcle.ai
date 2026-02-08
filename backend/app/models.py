@@ -45,11 +45,12 @@ class StatusResponse(BaseModel):
 
 
 class AuthRef(BaseModel):
-    scheme: Literal["none", "bearer", "basic", "header"] = "none"
+    scheme: Literal["none", "bearer", "basic", "header", "query_param"] = "none"
     env: Optional[str] = None
     header_name: Optional[str] = None
+    param_name: Optional[str] = None
 
-    @field_validator("env", "header_name", mode="before")
+    @field_validator("env", "header_name", "param_name", mode="before")
     @classmethod
     def normalize_optional_string(cls, value):
         if value is None:
@@ -61,18 +62,32 @@ class AuthRef(BaseModel):
 
     @model_validator(mode="after")
     def validate_auth_ref(self):
-        if self.scheme == "none":
+        scheme = (self.scheme or "none").strip()
+
+        if scheme == "none":
+            self.scheme = "none"
             self.env = None
             self.header_name = None
+            self.param_name = None
             return self
-
-        if self.scheme == "header" and not self.header_name:
-            raise ValueError("header_name is required when scheme='header'")
-        if self.scheme != "header":
-            self.header_name = None
 
         if not self.env:
             raise ValueError("env is required when scheme is not 'none'")
+
+        if scheme == "header":
+            self.param_name = None
+            if not self.header_name:
+                raise ValueError("header_name is required when scheme='header'")
+            return self
+
+        if scheme == "query_param":
+            self.header_name = None
+            if not self.param_name:
+                raise ValueError("param_name is required when scheme='query_param'")
+            return self
+
+        self.header_name = None
+        self.param_name = None
         return self
 
 

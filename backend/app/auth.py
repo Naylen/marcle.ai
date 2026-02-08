@@ -38,3 +38,22 @@ def build_auth_headers(auth_ref: AuthRef | None) -> dict[str, str]:
     if auth_ref.scheme == "header":
         return {auth_ref.header_name: value}  # validated in model
     return {}
+
+
+def build_auth_params(auth_ref: AuthRef | None) -> dict[str, str]:
+    """Returns query parameters derived from auth_ref."""
+    if auth_ref is None or auth_ref.scheme == "none":
+        return {}
+
+    if auth_ref.scheme != "query_param":
+        return {}
+
+    env_name = (auth_ref.env or "").strip()
+    if not env_name:
+        raise MissingCredentialError("Missing auth env var name")
+
+    value = os.getenv(env_name, "").strip()
+    if not value:
+        raise MissingCredentialError(env_name)
+
+    return {auth_ref.param_name: value}  # validated in model

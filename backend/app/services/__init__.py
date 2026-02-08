@@ -7,7 +7,7 @@ from typing import Optional, Iterable
 import httpx
 
 from app import config
-from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers
+from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers, build_auth_params
 from app.models import AuthRef, ServiceStatus, Status, ServiceGroup
 
 logger = logging.getLogger("marcle.services")
@@ -42,6 +42,7 @@ async def http_check(
     request_headers = dict(headers or {})
     try:
         request_headers.update(build_auth_headers(auth_ref))
+        auth_params = build_auth_params(auth_ref)
     except MissingCredentialError as exc:
         logger.warning("Missing credential env var for %s: %s", id, exc.env_name)
         return ServiceStatus(
@@ -68,7 +69,7 @@ async def http_check(
     start = time.monotonic()
     try:
         async with httpx.AsyncClient(verify=verify_ssl, timeout=TIMEOUT) as client:
-            resp = await client.get(full_url, headers=request_headers)
+            resp = await client.get(full_url, headers=request_headers, params=auth_params)
         latency = int((time.monotonic() - start) * 1000)
 
         status = Status.HEALTHY if resp.status_code in expected_codes else Status.DEGRADED

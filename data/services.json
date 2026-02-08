@@ -100,9 +100,9 @@
       "description": "Plex monitoring",
       "verify_ssl": false,
       "auth_ref": {
-        "scheme": "header",
+        "scheme": "query_param",
         "env": "TAUTULLI_API_KEY",
-        "header_name": "X-Api-Key"
+        "param_name": "apikey"
       }
     },
     {

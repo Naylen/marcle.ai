@@ -11,8 +11,8 @@ async def check_tautulli() -> ServiceStatus:
         name="Tautulli",
         group=ServiceGroup.MEDIA,
         url=config.TAUTULLI_URL,
-        path="/api/v2?cmd=arnold",
-        auth_ref=AuthRef(scheme="header", env="TAUTULLI_API_KEY", header_name="X-Api-Key"),
+        path="/api/v2?cmd=status",
+        auth_ref=AuthRef(scheme="query_param", env="TAUTULLI_API_KEY", param_name="apikey"),
         description="Plex monitoring",
         icon="tautulli.svg",
     )

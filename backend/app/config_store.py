@@ -104,7 +104,7 @@ def _default_services() -> list[ServiceConfig]:
             icon="tautulli.svg",
             enabled=True,
             description="Plex monitoring",
-            auth_ref=AuthRef(scheme="header", env="TAUTULLI_API_KEY", header_name="X-Api-Key"),
+            auth_ref=AuthRef(scheme="query_param", env="TAUTULLI_API_KEY", param_name="apikey"),
         ),
         ServiceConfig(
             id="ollama",

@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
 from app import config
-from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers
+from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers, build_auth_params
 from app.audit_log import audit_log_store
 from app.config_store import config_store
 from app.models import (
@@ -57,7 +57,7 @@ CHECK_TYPE_PROFILES: dict[str, dict] = {
         "headers": {"Accept": "application/json"},
     },
     "overseerr": {"path": "/api/v1/status", "healthy_status_codes": {200}},
-    "tautulli": {"path": "/api/v2?cmd=arnold", "healthy_status_codes": {200}},
+    "tautulli": {"path": "/api/v2?cmd=status", "healthy_status_codes": {200}},
     "arrs": {"path": "/api/v3/health", "healthy_status_codes": {200}},
     "radarr": {"path": "/api/v3/health", "healthy_status_codes": {200}},
     "sonarr": {"path": "/api/v3/health", "healthy_status_codes": {200}},
@@ -551,6 +551,7 @@ async def _dispatch_test_notifications(cfg: NotificationsConfig) -> int:
             headers = {"Content-Type": "application/json"}
             try:
                 headers.update(build_auth_headers(endpoint.auth_ref))
+                params = build_auth_params(endpoint.auth_ref)
             except MissingCredentialError as exc:
                 logger.warning("Skipping notification endpoint %s due to missing env %s", endpoint.id, exc.env_name)
                 continue
@@ -564,7 +565,7 @@ async def _dispatch_test_notifications(cfg: NotificationsConfig) -> int:
                 continue
 
             try:
-                await client.post(endpoint.url, json=payload, headers=headers)
+                await client.post(endpoint.url, json=payload, headers=headers, params=params)
                 dispatched += 1
             except Exception:
                 logger.warning("Failed sending test notification to endpoint %s", endpoint.id, exc_info=True)
