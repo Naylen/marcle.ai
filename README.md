@@ -1,119 +1,146 @@
 # marcle.ai
 
-Public, read-only homelab operations dashboard with a protected runtime admin API and **ask.marcle.ai** Q&A sub-app.
+Public homelab operations dashboard and **ask.marcle.ai** Q&A app. Self-hosted, no frameworks, zero build step.
 
 ## Structure
 
 ```
-├── frontend/          Static landing page + admin UI (HTML/CSS/JS, nginx)
-│   └── ask/           Ask app frontend (HTML/CSS/JS)
-├── backend/           Status/admin/ask API (Python, FastAPI)
+├── frontend/                Static sites served by nginx
+│   ├── index.html           Status dashboard
+│   ├── admin.html           Admin panel
+│   ├── styles.css           Shared design system
+│   └── ask/                 Ask app (HTML/CSS/JS)
+├── backend/                 FastAPI application
 │   └── app/
-│       ├── routers/ask.py       Ask API router
-│       ├── ask_db.py            SQLite schema + connection
-│       └── ask_services/        Google OAuth, Discord webhook, email
-├── data/              Runtime data (services.json, ask.db, etc.)
-├── docker-compose.yml Local dev stack
-└── .env.example       Required environment variables
+│       ├── main.py          Status API + refresh loop
+│       ├── routers/ask.py   Ask API (auth, questions, answers)
+│       ├── ask_db.py        SQLite schema + connections
+│       └── ask_services/    Google OAuth, Discord webhook, SMTP email
+├── data/                    Runtime state (mounted volume)
+│   ├── services.json        Service definitions
+│   ├── observations.json    Incident tracking
+│   ├── audit.log            Admin audit trail
+│   └── ask.db               Ask app database
+├── docker-compose.yml       Container orchestration
+└── .env.example             All environment variables
 ```
 
 ## Quick Start
 
 ```bash
 cp .env.example .env
-# Fill in service URLs, secrets, and Ask app config (Google OAuth, Discord, SMTP)
+# Fill in values — service URLs, admin token, and Ask app config
 
 docker compose up --build
 ```
 
-Status Dashboard: `http://localhost:9182`
-Ask App: `http://localhost:9182/ask`
-API (via nginx proxy): `http://localhost:9182/api/status`
-Admin UI: `http://localhost:9182/admin`
-Backend container port `8000` is internal-only by default in `docker-compose.yml`.
+| Page | URL |
+|------|-----|
+| Status Dashboard | `http://localhost:9182` |
+| Ask App | `http://localhost:9182/ask` |
+| Admin Panel | `http://localhost:9182/admin` |
+| API | `http://localhost:9182/api/status` |
 
-## Frontend
+Backend port `8000` is internal-only.
 
-Plain HTML + CSS + minimal JS. No build step. No frameworks.
-- Public dashboard fetches `/api/status` and `/api/overview` for service tiles, overview widgets, incident banner, and service detail drawer.
-- Admin dashboard uses bearer token auth for runtime service management, bulk enable/disable, health preview, and audit log viewing.
+## Status Dashboard
 
-To point the frontend at a different API origin, set `window.MARCLE_API_BASE` before the script loads, or configure your reverse proxy to route `/api/*` to the backend.
+Plain HTML + CSS + vanilla JS. No build step.
 
-## Backend
+The dashboard polls `/api/status` and `/api/overview` every 60 seconds for service tiles, overview widgets, incident banners, and a service detail drawer. Checks run in a background loop every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRENCY` (default `10`) concurrent checks.
 
-### Running locally (without Docker)
+## Ask App
 
-PowerShell:
-```powershell
-cd backend
-python -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+The Ask app (`/ask`) lets authenticated users submit questions to Marc.
 
-Bash:
-```bash
-cd backend
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+**How it works:**
+1. User signs in with Google OAuth2.
+2. User submits a question (costs Marcle Points).
+3. Question is posted to a Discord channel via webhook.
+4. Marc answers in Discord, then calls the answer endpoint.
+5. User receives the answer by email.
 
-### API
+**Key features:**
+- Google OAuth2 with CSRF-safe sessions (`SameSite=Lax`, `HttpOnly` cookies)
+- Marcle Points system (configurable starting balance and cost per question)
+- Atomic points decrement with DB-level `CHECK (points >= 0)` constraint
+- Rate limiting (5 questions per user per 60 seconds)
+- Discord webhook with rich embeds and inline answer instructions
+- HTML + plain text email delivery
+- Admin endpoints for user management and points adjustment
 
-Public endpoints:
-- `GET /api/status`
-- `GET /api/overview`
-- `GET /api/incidents?limit=50`
-- `GET /api/services/{id}`
+**Designed for future integration** with n8n workflows and local LLM answering.
 
-Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
-- `GET /api/admin/services`
-- `GET /api/admin/audit?limit=200`
-- `GET /api/admin/notifications`
-- `PUT /api/admin/notifications`
-- `POST /api/admin/notifications/test`
-- `POST /api/admin/services`
-- `PUT /api/admin/services/{service_id}`
-- `DELETE /api/admin/services/{service_id}`
-- `POST /api/admin/services/{service_id}/toggle`
-- `POST /api/admin/services/bulk`
+### Ask Environment Variables
 
-`/api/status` returns normalized status for enabled services from `services.json`.
-Checks run in a background loop and `/api/status` returns the latest in-memory payload immediately.
-The loop runs every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRENCY` (default `10`) and per-check timeout `REQUEST_TIMEOUT_SECONDS` (default `4`).
-`/api/overview` returns derived dashboard metadata (counts, cache age, last incident, and per-service last-changed info).
-`/api/incidents` returns recent incident transitions (most recent first).
-`/api/services/{id}` returns service detail + recent incidents for drawer views.
+| Variable | Purpose |
+|----------|---------|
+| `GOOGLE_CLIENT_ID` | Google OAuth2 client ID |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
+| `GOOGLE_REDIRECT_URL` | OAuth callback URL (`http://localhost:9182/api/ask/auth/callback`) |
+| `SESSION_SECRET` | Secret for session token generation |
+| `DISCORD_WEBHOOK_URL` | Discord channel webhook for question notifications |
+| `SMTP_HOST` / `PORT` / `USER` / `PASS` / `FROM` | SMTP config for answer emails |
+| `ASK_ANSWER_WEBHOOK_SECRET` | Shared secret for the answer endpoint |
+| `DEFAULT_STARTING_POINTS` | Points given to new users (default `10`) |
+| `POINTS_PER_QUESTION` | Points deducted per question (default `1`) |
+| `BASE_PUBLIC_URL` | Public URL for redirects and Discord messages |
+| `ASK_DB_PATH` | SQLite database path (default `/data/ask.db`) |
 
-Ask endpoints (require Google OAuth session cookie):
-- `GET /api/ask/auth/login` — redirect to Google OAuth
-- `GET /api/ask/auth/callback` — OAuth callback
-- `POST /api/ask/auth/logout` — clear session
-- `GET /api/ask/me` — current user + points balance
-- `POST /api/ask/questions` — submit question (costs points, posts to Discord)
-- `GET /api/ask/questions` — list user's questions
+## API Reference
 
-Ask answer webhook (require `X-Webhook-Secret` header):
-- `POST /api/ask/answers` — submit answer, emails user
+### Public (no auth)
 
-Ask admin (require `Authorization: Bearer <ADMIN_TOKEN>`):
-- `GET /api/ask/admin/users` — list all users
-- `POST /api/ask/admin/points` — adjust user point balance
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/status` | Current service statuses |
+| `GET` | `/api/overview` | Dashboard metadata (counts, cache age, last incident) |
+| `GET` | `/api/incidents?limit=50` | Recent incident transitions |
+| `GET` | `/api/services/{id}` | Service detail + recent incidents |
+| `GET` | `/healthz` | Health probe |
 
-### Runtime Service Config (`services.json`)
+### Admin (`Authorization: Bearer <ADMIN_TOKEN>`)
 
-`services.json` stores only non-secret service metadata.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/admin/services` | List all services with credential flags |
+| `POST` | `/api/admin/services` | Create service |
+| `PUT` | `/api/admin/services/{id}` | Upsert service |
+| `DELETE` | `/api/admin/services/{id}` | Delete service |
+| `POST` | `/api/admin/services/{id}/toggle` | Toggle enabled |
+| `POST` | `/api/admin/services/bulk` | Bulk enable/disable |
+| `GET` | `/api/admin/audit?limit=200` | Audit log |
+| `GET` | `/api/admin/notifications` | Notification config |
+| `PUT` | `/api/admin/notifications` | Update notifications |
+| `POST` | `/api/admin/notifications/test` | Test notifications |
 
-Operational dashboard metadata is persisted separately in `observations.json`
-(default `/data/observations.json`) and contains only status transitions:
-`services.<id>.last_status`, `last_changed_at`, `last_seen_at`, and
-global `last_incident` plus capped `incident_history`.
-Each service observation also tracks `change_timestamps` and `flapping`.
+### Ask — User (session cookie via Google OAuth)
 
-Auth is configured with `auth_ref`, which points to environment variable names:
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/ask/auth/login` | Redirect to Google OAuth |
+| `GET` | `/api/ask/auth/callback` | OAuth callback (sets session cookie) |
+| `POST` | `/api/ask/auth/logout` | Clear session |
+| `GET` | `/api/ask/me` | Current user + points balance |
+| `POST` | `/api/ask/questions` | Submit question (costs points, posts to Discord) |
+| `GET` | `/api/ask/questions` | List user's questions |
+
+### Ask — Answer Webhook (`X-Webhook-Secret` header)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/ask/answers` | Submit answer → marks answered + emails user |
+
+### Ask — Admin (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/ask/admin/users` | List all users |
+| `POST` | `/api/ask/admin/points` | Adjust user point balance |
+
+## Service Configuration
+
+`services.json` stores non-secret service metadata. Auth is configured via `auth_ref` pointing to environment variable names:
 
 ```json
 {
@@ -123,67 +150,51 @@ Auth is configured with `auth_ref`, which points to environment variable names:
   "url": "https://pve.local:8006",
   "check_type": "proxmox",
   "enabled": true,
-  "auth_ref": {
-    "scheme": "bearer",
-    "env": "PROXMOX_API_TOKEN"
-  }
+  "auth_ref": { "scheme": "bearer", "env": "PROXMOX_API_TOKEN" }
 }
 ```
 
-Supported auth schemes:
-- `none`
-- `bearer` → `Authorization: Bearer <ENV_VALUE>`
-- `basic` → `Authorization: Basic base64(user:pass)` where env value is `USER:PASS`
-- `header` → custom `<header_name>: <ENV_VALUE>`
-- `query_param` → appends `<param_name>=<ENV_VALUE>` to the request URL query string
+**Auth schemes:** `none`, `bearer`, `basic`, `header`, `query_param`
 
-Tautulli default:
-- check path/profile uses `GET /api/v2` with `cmd=status` as query params
-- set `auth_ref` to `{"scheme":"query_param","env":"TAUTULLI_API_KEY","param_name":"apikey"}`
+Never put secrets in `services.json`. Set values only in `.env` or container environment.
 
-Never put token/password values into `services.json`.
-Set actual secret values only in backend environment variables (`.env`/container env).
+## Status Environment Variables
 
-### Required Environment Variables
+See `.env.example` for the full list. Key variables:
 
-See `.env.example`. All are optional; unconfigured or missing-credential services report `unknown`.
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `ADMIN_TOKEN` | — | Admin API access (required to enable admin endpoints) |
+| `REFRESH_INTERVAL_SECONDS` | `30` | Background check cadence |
+| `REQUEST_TIMEOUT_SECONDS` | `4` | Per-check HTTP timeout |
+| `MAX_CONCURRENCY` | `10` | In-flight checks per cycle |
+| `EXPOSE_SERVICE_URLS` | `false` | Include URLs in public API responses |
+| `FLAP_WINDOW_SECONDS` | `600` | Flapping detection lookback window |
+| `FLAP_THRESHOLD` | `3` | Transitions in window to trigger flapping |
 
-Important:
-- `ADMIN_TOKEN` controls admin API access.
-- `CHECK_TIMEOUT_SECONDS` optionally overrides per-check timeout (defaults to `REQUEST_TIMEOUT_SECONDS`).
-- `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
-- `OBSERVATIONS_PATH` points to persisted operational metadata (default `/data/observations.json`).
-- `OBSERVATIONS_HISTORY_LIMIT` caps stored incident history entries (default `200`).
-- `AUDIT_LOG_PATH` points to append-only admin audit JSONL (default `/data/audit.log`).
-- `AUDIT_LOG_MAX_BYTES` caps audit file size before trimming oldest lines (default `5242880`).
-- `EXPOSE_SERVICE_URLS` controls whether `/api/services/{id}` includes `url` (default `false`).
-- `FLAP_WINDOW_SECONDS` defines the flapping lookback window (default `600`).
-- `FLAP_THRESHOLD` defines minimum transitions in window for flapping (default `3`).
-- `REFRESH_INTERVAL_SECONDS` controls background refresh cadence (default `30`).
-- `REQUEST_TIMEOUT_SECONDS` controls per-check timeout (default `4`).
-- `MAX_CONCURRENCY` controls in-flight checks per refresh cycle (default `10`).
-- `auth_ref.env` names must exist in backend runtime environment.
+## Running Locally (without Docker)
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
 
 ## Deployment
 
-Designed to run behind a Cloudflare Tunnel. No inbound ports required. TLS handled by the tunnel.
-In production, keep `/admin` behind Cloudflare Access and still require `Authorization: Bearer <ADMIN_TOKEN>` at the backend.
-Route `ask.marcle.ai` via Cloudflare Tunnel to the same nginx container (port 9182).
+Designed for Cloudflare Tunnel — no inbound ports, TLS handled by the tunnel.
 
 ```
-Internet → Cloudflare Tunnel → nginx (:80 inside container, :9182 on host)
-                                ├── /           → static status dashboard
-                                ├── /admin      → admin UI
-                                ├── /ask        → ask.marcle.ai frontend
-                                └── /api/*      → backend (uvicorn :8000)
+Internet → Cloudflare Tunnel → nginx (:80 container, :9182 host)
+                                ├── /         → status dashboard
+                                ├── /ask      → ask.marcle.ai
+                                ├── /admin    → admin panel
+                                └── /api/*    → backend (uvicorn :8000)
 ```
 
-### Ask App
-
-The Ask app (`/ask`) uses Google OAuth2 for authentication and SQLite for data storage.
-Questions are posted to a Discord channel via webhook. Answers are delivered via email.
-User points are managed via the admin API or can be seeded with `DEFAULT_STARTING_POINTS`.
-
-Required env vars for Ask: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`,
-`SESSION_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `ASK_ANSWER_WEBHOOK_SECRET`.
-See `.env.example` for full list.
+In production:
+- Keep `/admin` behind Cloudflare Access
+- Always require `Authorization: Bearer <ADMIN_TOKEN>` at the backend
+- Route `ask.marcle.ai` via Cloudflare Tunnel to the same nginx container
+- Generate strong values for `SESSION_SECRET` and `ASK_ANSWER_WEBHOOK_SECRET`
