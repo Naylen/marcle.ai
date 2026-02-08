@@ -1,13 +1,18 @@
 # marcle.ai
 
-Public, read-only homelab operations dashboard with a protected runtime admin API.
+Public, read-only homelab operations dashboard with a protected runtime admin API and **ask.marcle.ai** Q&A sub-app.
 
 ## Structure
 
 ```
 ├── frontend/          Static landing page + admin UI (HTML/CSS/JS, nginx)
-├── backend/           Status/admin API (Python, FastAPI)
-├── data/services.json Runtime service definitions (safe to commit)
+│   └── ask/           Ask app frontend (HTML/CSS/JS)
+├── backend/           Status/admin/ask API (Python, FastAPI)
+│   └── app/
+│       ├── routers/ask.py       Ask API router
+│       ├── ask_db.py            SQLite schema + connection
+│       └── ask_services/        Google OAuth, Discord webhook, email
+├── data/              Runtime data (services.json, ask.db, etc.)
 ├── docker-compose.yml Local dev stack
 └── .env.example       Required environment variables
 ```
@@ -16,14 +21,15 @@ Public, read-only homelab operations dashboard with a protected runtime admin AP
 
 ```bash
 cp .env.example .env
-# Fill in service URLs and env-backed secrets
+# Fill in service URLs, secrets, and Ask app config (Google OAuth, Discord, SMTP)
 
 docker compose up --build
 ```
 
-Frontend: `http://localhost:9181`
-API (via nginx proxy): `http://localhost:9181/api/status`
-Admin UI: `http://localhost:9181/admin`
+Status Dashboard: `http://localhost:9182`
+Ask App: `http://localhost:9182/ask`
+API (via nginx proxy): `http://localhost:9182/api/status`
+Admin UI: `http://localhost:9182/admin`
 Backend container port `8000` is internal-only by default in `docker-compose.yml`.
 
 ## Frontend
@@ -81,6 +87,21 @@ The loop runs every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRE
 `/api/overview` returns derived dashboard metadata (counts, cache age, last incident, and per-service last-changed info).
 `/api/incidents` returns recent incident transitions (most recent first).
 `/api/services/{id}` returns service detail + recent incidents for drawer views.
+
+Ask endpoints (require Google OAuth session cookie):
+- `GET /api/ask/auth/login` — redirect to Google OAuth
+- `GET /api/ask/auth/callback` — OAuth callback
+- `POST /api/ask/auth/logout` — clear session
+- `GET /api/ask/me` — current user + points balance
+- `POST /api/ask/questions` — submit question (costs points, posts to Discord)
+- `GET /api/ask/questions` — list user's questions
+
+Ask answer webhook (require `X-Webhook-Secret` header):
+- `POST /api/ask/answers` — submit answer, emails user
+
+Ask admin (require `Authorization: Bearer <ADMIN_TOKEN>`):
+- `GET /api/ask/admin/users` — list all users
+- `POST /api/ask/admin/points` — adjust user point balance
 
 ### Runtime Service Config (`services.json`)
 
@@ -147,8 +168,22 @@ Important:
 
 Designed to run behind a Cloudflare Tunnel. No inbound ports required. TLS handled by the tunnel.
 In production, keep `/admin` behind Cloudflare Access and still require `Authorization: Bearer <ADMIN_TOKEN>` at the backend.
+Route `ask.marcle.ai` via Cloudflare Tunnel to the same nginx container (port 9182).
 
 ```
-Internet → Cloudflare Tunnel → reverse proxy → frontend (nginx :80)
-                                             → backend (uvicorn :8000)
+Internet → Cloudflare Tunnel → nginx (:80 inside container, :9182 on host)
+                                ├── /           → static status dashboard
+                                ├── /admin      → admin UI
+                                ├── /ask        → ask.marcle.ai frontend
+                                └── /api/*      → backend (uvicorn :8000)
 ```
+
+### Ask App
+
+The Ask app (`/ask`) uses Google OAuth2 for authentication and SQLite for data storage.
+Questions are posted to a Discord channel via webhook. Answers are delivered via email.
+User points are managed via the admin API or can be seeded with `DEFAULT_STARTING_POINTS`.
+
+Required env vars for Ask: `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URL`,
+`SESSION_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `ASK_ANSWER_WEBHOOK_SECRET`.
+See `.env.example` for full list.
