@@ -12,22 +12,28 @@ from typing import Any, Mapping
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
+import httpx
 
 from app import config
+from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers
 from app.audit_log import audit_log_store
 from app.config_store import config_store
 from app.models import (
     AdminAuditEntry,
     AdminBulkServicesRequest,
+    AdminNotificationEndpoint,
+    AdminNotificationsConfigResponse,
     AdminServiceConfig,
     AdminServicesConfigResponse,
     AuthRef,
+    NotificationsConfig,
     OverallStatus,
     ServiceConfig,
     ServiceStatus,
     Status,
     StatusResponse,
 )
+from app.notifications_store import notifications_store
 from app.observations_store import observations_store
 from app.services import http_check
 from app.state import state
@@ -471,6 +477,15 @@ def _to_admin_service(service: ServiceConfig) -> AdminServiceConfig:
     return AdminServiceConfig.model_validate(payload)
 
 
+def _to_admin_notifications_config(cfg: NotificationsConfig) -> AdminNotificationsConfigResponse:
+    endpoints: list[AdminNotificationEndpoint] = []
+    for endpoint in cfg.endpoints:
+        payload = endpoint.model_dump(mode="python")
+        payload["credential_present"] = _credential_present(endpoint.auth_ref)
+        endpoints.append(AdminNotificationEndpoint.model_validate(payload))
+    return AdminNotificationsConfigResponse(enabled=cfg.enabled, endpoints=endpoints)
+
+
 def _sanitize_audit_value(value: str | None, max_length: int) -> str | None:
     if not value:
         return None
@@ -518,6 +533,45 @@ async def _append_admin_audit_entry(
         logger.warning("Failed to append admin audit entry for action=%s", action, exc_info=True)
 
 
+async def _dispatch_test_notifications(cfg: NotificationsConfig) -> int:
+    if not cfg.enabled:
+        return 0
+
+    payload = {
+        "event": "test",
+        "source": "marcle.ai",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "message": "Test notification from admin panel",
+    }
+    timeout = httpx.Timeout(timeout=config.REQUEST_TIMEOUT_SECONDS)
+    dispatched = 0
+
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for endpoint in cfg.endpoints:
+            headers = {"Content-Type": "application/json"}
+            try:
+                headers.update(build_auth_headers(endpoint.auth_ref))
+            except MissingCredentialError as exc:
+                logger.warning("Skipping notification endpoint %s due to missing env %s", endpoint.id, exc.env_name)
+                continue
+            except InvalidCredentialFormatError as exc:
+                logger.warning(
+                    "Skipping notification endpoint %s due to invalid %s credential in %s",
+                    endpoint.id,
+                    exc.scheme,
+                    exc.env_name,
+                )
+                continue
+
+            try:
+                await client.post(endpoint.url, json=payload, headers=headers)
+                dispatched += 1
+            except Exception:
+                logger.warning("Failed sending test notification to endpoint %s", endpoint.id, exc_info=True)
+
+    return dispatched
+
+
 @app.get("/api/admin/services", response_model=AdminServicesConfigResponse)
 async def list_admin_services(_: None = Depends(_require_admin)):
     services = [_to_admin_service(service) for service in config_store.list_services()]
@@ -531,6 +585,53 @@ async def get_admin_audit(
 ):
     bounded_limit = min(limit, MAX_ADMIN_AUDIT_LIMIT)
     return await asyncio.to_thread(audit_log_store.recent, bounded_limit)
+
+
+@app.get("/api/admin/notifications", response_model=AdminNotificationsConfigResponse)
+async def get_admin_notifications(_: None = Depends(_require_admin)):
+    cfg = notifications_store.get()
+    return _to_admin_notifications_config(cfg)
+
+
+@app.put("/api/admin/notifications", response_model=AdminNotificationsConfigResponse)
+async def put_admin_notifications(
+    payload: NotificationsConfig,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
+    saved = notifications_store.put(payload)
+    await _append_admin_audit_entry(
+        action="notifications_update",
+        service_id=None,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
+    return _to_admin_notifications_config(saved)
+
+
+@app.post("/api/admin/notifications/test")
+async def post_admin_notifications_test(
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
+    cfg = notifications_store.get()
+    dispatched = await _dispatch_test_notifications(cfg)
+    await _append_admin_audit_entry(
+        action="notifications_test",
+        service_id=None,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
+    return {
+        "status": "queued",
+        "dispatched": dispatched,
+    }
 
 
 @app.post("/api/admin/services", response_model=AdminServiceConfig, status_code=status.HTTP_201_CREATED)

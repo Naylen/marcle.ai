@@ -126,9 +126,108 @@ class AdminBulkServicesRequest(BaseModel):
         return normalized
 
 
+class NotificationEndpointFilters(BaseModel):
+    groups: list[ServiceGroup] = Field(default_factory=list)
+    service_ids: list[str] = Field(default_factory=list)
+    min_severity: Literal["any", "degraded", "down"] = "any"
+    cooldown_seconds: int = Field(default=0, ge=0)
+
+    @field_validator("service_ids", mode="before")
+    @classmethod
+    def normalize_service_ids(cls, value):
+        if value is None:
+            return []
+        if isinstance(value, str):
+            value = [item.strip() for item in value.split(",")]
+        if not isinstance(value, list):
+            return value
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            service_id = item.strip()
+            if not service_id or service_id in seen:
+                continue
+            normalized.append(service_id)
+            seen.add(service_id)
+        return normalized
+
+
+class NotificationEndpoint(BaseModel):
+    id: str
+    url: str
+    events: list[Literal["incident", "recovery", "flapping"]] = Field(default_factory=lambda: ["incident"])
+    filters: NotificationEndpointFilters = Field(default_factory=NotificationEndpointFilters)
+    auth_ref: AuthRef | None = None
+
+    @field_validator("id", "url", mode="before")
+    @classmethod
+    def normalize_required_string(cls, value):
+        if isinstance(value, str):
+            return value.strip()
+        return value
+
+    @field_validator("events", mode="before")
+    @classmethod
+    def normalize_events(cls, value):
+        if value is None:
+            return ["incident"]
+        if not isinstance(value, list):
+            return value
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            event_name = item.strip().lower()
+            if event_name not in {"incident", "recovery", "flapping"}:
+                continue
+            if event_name in seen:
+                continue
+            normalized.append(event_name)
+            seen.add(event_name)
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_endpoint(self):
+        if not self.id:
+            raise ValueError("id is required")
+        if not self.url:
+            raise ValueError("url is required")
+        if not self.events:
+            raise ValueError("at least one event is required")
+        return self
+
+
+class NotificationsConfig(BaseModel):
+    enabled: bool = False
+    endpoints: list[NotificationEndpoint] = Field(default_factory=list)
+
+    @field_validator("endpoints", mode="after")
+    @classmethod
+    def validate_unique_endpoint_ids(cls, endpoints: list[NotificationEndpoint]):
+        seen: set[str] = set()
+        for endpoint in endpoints:
+            if endpoint.id in seen:
+                raise ValueError(f"Duplicate endpoint id '{endpoint.id}'")
+            seen.add(endpoint.id)
+        return endpoints
+
+
+class AdminNotificationEndpoint(NotificationEndpoint):
+    credential_present: bool | None = None
+
+
+class AdminNotificationsConfigResponse(BaseModel):
+    enabled: bool = False
+    endpoints: list[AdminNotificationEndpoint] = Field(default_factory=list)
+
+
 class AdminAuditEntry(BaseModel):
     ts: datetime
-    action: Literal["create", "update", "delete", "toggle", "bulk"]
+    action: Literal["create", "update", "delete", "toggle", "bulk", "notifications_update", "notifications_test"]
     service_id: Optional[str] = None
     ids: Optional[list[str]] = None
     enabled: Optional[bool] = None

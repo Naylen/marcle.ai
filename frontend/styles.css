@@ -1147,8 +1147,9 @@ body.admin-page {
 .admin-panel-auth { order: 1; }
 .admin-panel-services { order: 2; }
 .admin-panel-bulk { order: 3; }
-.admin-panel-form { order: 4; }
-.admin-panel-audit { order: 5; }
+.admin-panel-notifications { order: 4; }
+.admin-panel-form { order: 5; }
+.admin-panel-audit { order: 6; }
 
 .admin-panel-heading {
   display: flex;
@@ -1362,6 +1363,58 @@ body.admin-page {
 
 .admin-audit-table {
   min-width: 64rem;
+}
+
+.admin-notifications-table {
+  min-width: 62rem;
+}
+
+.admin-notifications-topbar {
+  margin-top: 0.65rem;
+  margin-bottom: 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+}
+
+.admin-checkbox-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+.admin-checkbox-inline input[type="checkbox"] {
+  width: 0.9rem;
+  height: 0.9rem;
+  accent-color: #60a5fa;
+}
+
+.admin-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+}
+
+.admin-notification-url {
+  max-width: 20rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.admin-notification-filters,
+.admin-notification-events {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.admin-subpanel-heading {
+  margin-top: 0.8rem;
 }
 
 .admin-table th {
@@ -1696,6 +1749,10 @@ body.admin-page {
   .admin-audit-table {
     min-width: 58rem;
   }
+
+  .admin-notifications-table {
+    min-width: 52rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1716,6 +1773,10 @@ body.admin-page {
     min-width: 50rem;
   }
 
+  .admin-notifications-table {
+    min-width: 46rem;
+  }
+
   .admin-health-widget {
     grid-template-columns: 1fr;
   }
@@ -1726,6 +1787,10 @@ body.admin-page {
 
   .admin-actions-row {
     width: 100%;
+  }
+
+  .admin-notifications-topbar {
+    align-items: flex-start;
   }
 
   .admin-actions-row .admin-button {

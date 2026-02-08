@@ -22,6 +22,7 @@ CHECK_TIMEOUT_SECONDS: float = float(os.getenv("CHECK_TIMEOUT_SECONDS", str(REQU
 REFRESH_INTERVAL_SECONDS: float = float(os.getenv("REFRESH_INTERVAL_SECONDS", "30"))
 MAX_CONCURRENCY: int = int(os.getenv("MAX_CONCURRENCY", "10"))
 SERVICES_CONFIG_PATH: str = os.getenv("SERVICES_CONFIG_PATH", "/data/services.json")
+NOTIFICATIONS_CONFIG_PATH: str = os.getenv("NOTIFICATIONS_CONFIG_PATH", "/data/notifications.json")
 OBSERVATIONS_PATH: str = os.getenv("OBSERVATIONS_PATH", "/data/observations.json")
 OBSERVATIONS_HISTORY_LIMIT: int = int(os.getenv("OBSERVATIONS_HISTORY_LIMIT", "200"))
 AUDIT_LOG_PATH: str = os.getenv("AUDIT_LOG_PATH", "/data/audit.log")

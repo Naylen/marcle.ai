@@ -4,6 +4,8 @@
   var API_BASE = window.MARCLE_API_BASE || "";
   var ADMIN_URL = API_BASE + "/api/admin/services";
   var AUDIT_URL = API_BASE + "/api/admin/audit";
+  var NOTIFICATIONS_URL = API_BASE + "/api/admin/notifications";
+  var NOTIFICATIONS_TEST_URL = API_BASE + "/api/admin/notifications/test";
   var STATUS_URL = API_BASE + "/api/status";
   var OVERVIEW_URL = API_BASE + "/api/overview";
   var HEALTH_POLL_INTERVAL = 60000;
@@ -35,6 +37,36 @@
   var auditRefreshBtn = document.getElementById("audit-refresh-btn");
   var auditActionFilter = document.getElementById("audit-action-filter");
   var auditSearchInput = document.getElementById("audit-search-input");
+
+  var notificationsMeta = document.getElementById("notifications-meta");
+  var notificationsLoadBtn = document.getElementById("notifications-load-btn");
+  var notificationsEnabled = document.getElementById("notifications-enabled");
+  var notificationsSaveBtn = document.getElementById("notifications-save-btn");
+  var notificationsTestBtn = document.getElementById("notifications-test-btn");
+  var notificationsMessage = document.getElementById("notifications-message");
+  var notificationsListBody = document.getElementById("notifications-list-body");
+  var notificationForm = document.getElementById("notification-form");
+  var notificationFormHeading = document.getElementById("notification-form-heading");
+  var notificationCancelEditBtn = document.getElementById("notification-cancel-edit-btn");
+  var notificationAddBtn = document.getElementById("notification-add-btn");
+  var notificationResetBtn = document.getElementById("notification-reset-btn");
+  var notificationAuthEnvWrap = document.getElementById("notification-auth-env-wrap");
+  var notificationAuthHeaderWrap = document.getElementById("notification-auth-header-wrap");
+
+  var notificationFields = {
+    id: document.getElementById("notification-id"),
+    url: document.getElementById("notification-url"),
+    event_incident: document.getElementById("notification-event-incident"),
+    event_recovery: document.getElementById("notification-event-recovery"),
+    event_flapping: document.getElementById("notification-event-flapping"),
+    groups: document.getElementById("notification-groups"),
+    service_ids: document.getElementById("notification-service-ids"),
+    min_severity: document.getElementById("notification-min-severity"),
+    cooldown_seconds: document.getElementById("notification-cooldown"),
+    auth_scheme: document.getElementById("notification-auth-scheme"),
+    auth_env: document.getElementById("notification-auth-env"),
+    auth_header_name: document.getElementById("notification-auth-header")
+  };
 
   var serviceForm = document.getElementById("service-form");
   var serviceFormHeading = document.getElementById("service-form-heading");
@@ -79,7 +111,10 @@
   if (!tokenInput || !loadServicesBtn || !authStatusIndicator || !serviceListBody ||
       !bulkSelectionMeta || !bulkSelectAllBtn || !bulkEnableBtn || !bulkDisableBtn ||
       !serviceForm || !saveServiceBtn ||
-      !auditTableBody || !auditListMeta || !auditRefreshBtn || !auditActionFilter || !auditSearchInput) {
+      !auditTableBody || !auditListMeta || !auditRefreshBtn || !auditActionFilter || !auditSearchInput ||
+      !notificationsMeta || !notificationsLoadBtn || !notificationsEnabled || !notificationsSaveBtn ||
+      !notificationsTestBtn || !notificationsMessage || !notificationsListBody || !notificationForm ||
+      !notificationAddBtn || !notificationResetBtn || !notificationCancelEditBtn) {
     return;
   }
 
@@ -102,9 +137,12 @@
   var isAuthenticated = false;
   var lastAdminSuccessAt = null;
   var selectedServiceIds = {};
+  var notificationsConfig = { enabled: false, endpoints: [] };
+  var notificationEditId = null;
   var hasTriedSave = false;
   var touchedFields = {};
   var saveMessageTimer = null;
+  var notificationsMessageTimer = null;
   var modalLastFocused = null;
 
   function escapeHtml(str) {
@@ -165,7 +203,8 @@
     if (!value || typeof value !== "string") return "";
     var lowered = value.toLowerCase();
     if (lowered === "create" || lowered === "update" || lowered === "delete" ||
-        lowered === "toggle" || lowered === "bulk") {
+        lowered === "toggle" || lowered === "bulk" ||
+        lowered === "notifications_update" || lowered === "notifications_test") {
       return lowered;
     }
     return "";
@@ -203,6 +242,346 @@
     saveMessageTimer = setTimeout(function () {
       serviceSaveMessage.classList.add("is-hidden");
     }, 3500);
+  }
+
+  function hideNotificationsMessage() {
+    if (!notificationsMessage) return;
+    if (notificationsMessageTimer) {
+      clearTimeout(notificationsMessageTimer);
+      notificationsMessageTimer = null;
+    }
+    notificationsMessage.textContent = "";
+    notificationsMessage.className = "admin-success is-hidden";
+  }
+
+  function showNotificationsMessage(message, isError) {
+    if (!notificationsMessage) return;
+    hideNotificationsMessage();
+    notificationsMessage.textContent = message || "Done.";
+    notificationsMessage.className = isError ? "admin-alert admin-alert-error" : "admin-success";
+    notificationsMessageTimer = setTimeout(function () {
+      notificationsMessage.className = isError ? "admin-alert admin-alert-error is-hidden" : "admin-success is-hidden";
+    }, 4200);
+  }
+
+  function parseCommaList(value) {
+    return String(value || "")
+      .split(",")
+      .map(function (item) { return item.trim(); })
+      .filter(function (item) { return item.length > 0; });
+  }
+
+  function selectedValues(selectEl) {
+    if (!selectEl) return [];
+    return Array.prototype.slice.call(selectEl.options)
+      .filter(function (opt) { return !!opt.selected; })
+      .map(function (opt) { return opt.value; });
+  }
+
+  function setSelectedValues(selectEl, values) {
+    if (!selectEl) return;
+    var selected = {};
+    (values || []).forEach(function (value) {
+      selected[value] = true;
+    });
+    Array.prototype.forEach.call(selectEl.options, function (opt) {
+      opt.selected = !!selected[opt.value];
+    });
+  }
+
+  function setNotificationAuthVisibility(clearHiddenValues) {
+    var scheme = (notificationFields.auth_scheme && notificationFields.auth_scheme.value) || "none";
+    var showEnv = scheme !== "none";
+    var showHeader = scheme === "header";
+
+    if (notificationAuthEnvWrap) notificationAuthEnvWrap.classList.toggle("is-hidden", !showEnv);
+    if (notificationAuthHeaderWrap) notificationAuthHeaderWrap.classList.toggle("is-hidden", !showHeader);
+
+    if (clearHiddenValues) {
+      if (!showEnv && notificationFields.auth_env) notificationFields.auth_env.value = "";
+      if (!showHeader && notificationFields.auth_header_name) notificationFields.auth_header_name.value = "";
+    }
+  }
+
+  function notificationFormValues() {
+    var events = [];
+    if (notificationFields.event_incident && notificationFields.event_incident.checked) events.push("incident");
+    if (notificationFields.event_recovery && notificationFields.event_recovery.checked) events.push("recovery");
+    if (notificationFields.event_flapping && notificationFields.event_flapping.checked) events.push("flapping");
+
+    return {
+      id: notificationFields.id.value.trim(),
+      url: notificationFields.url.value.trim(),
+      events: events,
+      groups: selectedValues(notificationFields.groups),
+      service_ids: parseCommaList(notificationFields.service_ids.value),
+      min_severity: (notificationFields.min_severity.value || "any").trim(),
+      cooldown_seconds: Math.max(0, parseInt(notificationFields.cooldown_seconds.value || "0", 10) || 0),
+      auth_scheme: (notificationFields.auth_scheme.value || "none").trim(),
+      auth_env: notificationFields.auth_env.value.trim(),
+      auth_header_name: notificationFields.auth_header_name.value.trim()
+    };
+  }
+
+  function notificationValidation(values) {
+    if (!values.id) return "Notification ID is required.";
+    if (/\s/.test(values.id)) return "Notification ID cannot contain spaces.";
+    if (!values.url) return "Notification URL is required.";
+    if (!isValidUrl(values.url)) return "Notification URL must use http:// or https://.";
+    if (!values.events.length) return "Select at least one event type.";
+    if (values.auth_scheme !== "none" && !values.auth_env) return "Auth env var is required for this auth scheme.";
+    if (values.auth_scheme === "header" && !values.auth_header_name) return "Header name is required for header auth.";
+
+    var existing = (notificationsConfig.endpoints || []).some(function (endpoint) {
+      if (!endpoint || !endpoint.id) return false;
+      if (notificationEditId && endpoint.id === notificationEditId) return false;
+      return endpoint.id === values.id;
+    });
+    if (existing) return "A notification endpoint with this ID already exists.";
+    if (notificationEditId && values.id !== notificationEditId) return "ID cannot be changed while editing.";
+    return "";
+  }
+
+  function buildNotificationAuthRef(values) {
+    if (!values.auth_scheme || values.auth_scheme === "none") return null;
+    var authRef = {
+      scheme: values.auth_scheme,
+      env: values.auth_env
+    };
+    if (values.auth_scheme === "header") authRef.header_name = values.auth_header_name;
+    return authRef;
+  }
+
+  function buildNotificationEndpointPayload(values) {
+    return {
+      id: values.id,
+      url: values.url,
+      events: values.events,
+      filters: {
+        groups: values.groups,
+        service_ids: values.service_ids,
+        min_severity: values.min_severity || "any",
+        cooldown_seconds: values.cooldown_seconds
+      },
+      auth_ref: buildNotificationAuthRef(values)
+    };
+  }
+
+  function renderNotificationsMeta() {
+    if (!notificationsMeta) return;
+    var endpoints = notificationsConfig && Array.isArray(notificationsConfig.endpoints)
+      ? notificationsConfig.endpoints
+      : [];
+    notificationsMeta.textContent = endpoints.length + " endpoint" + (endpoints.length === 1 ? "" : "s") +
+      (notificationsConfig.enabled ? " · enabled" : " · disabled");
+  }
+
+  function notificationAuthBadge(endpoint) {
+    if (!endpoint || !endpoint.auth_ref || !endpoint.auth_ref.scheme || endpoint.auth_ref.scheme === "none") {
+      return { label: "Auth: N/A", className: "admin-chip-muted" };
+    }
+    if (endpoint.credential_present === true) {
+      return { label: "Auth: OK", className: "admin-chip-success" };
+    }
+    return { label: "Auth: Missing", className: "admin-chip-danger" };
+  }
+
+  function renderNotificationsList() {
+    if (!notificationsListBody) return;
+    var endpoints = notificationsConfig && Array.isArray(notificationsConfig.endpoints)
+      ? notificationsConfig.endpoints
+      : [];
+
+    if (!isAuthenticated) {
+      notificationsListBody.innerHTML = "<tr><td class='admin-empty' colspan='6'>Authenticate to load notification endpoints.</td></tr>";
+      return;
+    }
+
+    if (!endpoints.length) {
+      notificationsListBody.innerHTML = "<tr><td class='admin-empty' colspan='6'>No notification endpoints configured.</td></tr>";
+      return;
+    }
+
+    var disabledAttr = (!hasToken() || isLoading) ? " disabled" : "";
+    notificationsListBody.innerHTML = endpoints.map(function (endpoint) {
+      var authBadge = notificationAuthBadge(endpoint);
+      var events = Array.isArray(endpoint.events) ? endpoint.events.join(", ") : "incident";
+      var filters = endpoint.filters || {};
+      var groups = Array.isArray(filters.groups) && filters.groups.length ? filters.groups.join(",") : "all groups";
+      var serviceIds = Array.isArray(filters.service_ids) && filters.service_ids.length ? filters.service_ids.join(",") : "any service";
+      var minSeverity = filters.min_severity || "any";
+      var cooldown = typeof filters.cooldown_seconds === "number" ? filters.cooldown_seconds : 0;
+
+      return (
+        "<tr data-notification-id='" + escapeHtml(endpoint.id) + "'>" +
+          "<td><span class='admin-service-id'>" + escapeHtml(endpoint.id) + "</span></td>" +
+          "<td><span class='admin-table-text admin-notification-url'>" + escapeHtml(endpoint.url || "") + "</span></td>" +
+          "<td><div class='admin-notification-events'><span class='admin-chip admin-chip-muted'>" + escapeHtml(events) + "</span></div></td>" +
+          "<td><div class='admin-notification-filters'>" +
+            "<span class='admin-table-text'>groups: " + escapeHtml(groups) + "</span>" +
+            "<span class='admin-table-text'>services: " + escapeHtml(serviceIds) + "</span>" +
+            "<span class='admin-table-text'>min: " + escapeHtml(minSeverity) + " · cooldown: " + escapeHtml(String(cooldown)) + "s</span>" +
+          "</div></td>" +
+          "<td><span class='admin-chip " + authBadge.className + "'>" + escapeHtml(authBadge.label) + "</span></td>" +
+          "<td class='admin-row-actions'>" +
+            "<button type='button' class='admin-button admin-button-small' data-notification-action='edit'" + disabledAttr + ">Edit</button>" +
+            "<button type='button' class='admin-button admin-button-small admin-button-danger-ghost' data-notification-action='delete'" + disabledAttr + ">Delete</button>" +
+          "</td>" +
+        "</tr>"
+      );
+    }).join("");
+  }
+
+  function resetNotificationForm() {
+    if (!notificationForm) return;
+    notificationForm.reset();
+    notificationFields.event_incident.checked = true;
+    notificationFields.event_recovery.checked = false;
+    notificationFields.event_flapping.checked = false;
+    notificationFields.min_severity.value = "any";
+    notificationFields.cooldown_seconds.value = "0";
+    notificationFields.auth_scheme.value = "none";
+    notificationFields.auth_env.value = "";
+    notificationFields.auth_header_name.value = "";
+    setSelectedValues(notificationFields.groups, []);
+    notificationFields.service_ids.value = "";
+    setNotificationAuthVisibility(true);
+  }
+
+  function applyNotificationAddMode() {
+    notificationEditId = null;
+    notificationFormHeading.textContent = "Add Notification Endpoint";
+    notificationAddBtn.textContent = "Add endpoint";
+    notificationCancelEditBtn.classList.add("is-hidden");
+    notificationFields.id.readOnly = false;
+    resetNotificationForm();
+  }
+
+  function applyNotificationEditMode(endpointId) {
+    var endpoint = (notificationsConfig.endpoints || []).find(function (item) {
+      return item && item.id === endpointId;
+    });
+    if (!endpoint) {
+      showError("Notification endpoint not found.");
+      return;
+    }
+    notificationEditId = endpoint.id;
+    notificationFormHeading.textContent = "Edit Notification Endpoint";
+    notificationAddBtn.textContent = "Save endpoint";
+    notificationCancelEditBtn.classList.remove("is-hidden");
+    notificationFields.id.readOnly = true;
+
+    notificationFields.id.value = endpoint.id || "";
+    notificationFields.url.value = endpoint.url || "";
+    var events = Array.isArray(endpoint.events) ? endpoint.events : [];
+    notificationFields.event_incident.checked = events.indexOf("incident") !== -1;
+    notificationFields.event_recovery.checked = events.indexOf("recovery") !== -1;
+    notificationFields.event_flapping.checked = events.indexOf("flapping") !== -1;
+
+    var filters = endpoint.filters || {};
+    setSelectedValues(notificationFields.groups, filters.groups || []);
+    notificationFields.service_ids.value = Array.isArray(filters.service_ids) ? filters.service_ids.join(", ") : "";
+    notificationFields.min_severity.value = filters.min_severity || "any";
+    notificationFields.cooldown_seconds.value = String(typeof filters.cooldown_seconds === "number" ? filters.cooldown_seconds : 0);
+
+    var authRef = endpoint.auth_ref || null;
+    notificationFields.auth_scheme.value = authRef && authRef.scheme ? authRef.scheme : "none";
+    notificationFields.auth_env.value = authRef && authRef.env ? authRef.env : "";
+    notificationFields.auth_header_name.value = authRef && authRef.header_name ? authRef.header_name : "";
+    setNotificationAuthVisibility(false);
+  }
+
+  function currentNotificationsPayload() {
+    return {
+      enabled: !!(notificationsEnabled && notificationsEnabled.checked),
+      endpoints: (notificationsConfig.endpoints || []).map(function (endpoint) {
+        return {
+          id: endpoint.id,
+          url: endpoint.url,
+          events: endpoint.events || [],
+          filters: endpoint.filters || {
+            groups: [],
+            service_ids: [],
+            min_severity: "any",
+            cooldown_seconds: 0
+          },
+          auth_ref: endpoint.auth_ref || null
+        };
+      })
+    };
+  }
+
+  async function loadNotificationsConfig() {
+    var payload = await requestJson(NOTIFICATIONS_URL, { headers: adminHeaders() }, true);
+    notificationsConfig = {
+      enabled: !!(payload && payload.enabled),
+      endpoints: payload && Array.isArray(payload.endpoints) ? payload.endpoints.slice() : []
+    };
+    if (notificationsEnabled) notificationsEnabled.checked = notificationsConfig.enabled;
+    renderNotificationsMeta();
+    renderNotificationsList();
+    if (notificationEditId) {
+      var stillExists = notificationsConfig.endpoints.some(function (endpoint) {
+        return endpoint && endpoint.id === notificationEditId;
+      });
+      if (!stillExists) applyNotificationAddMode();
+    }
+  }
+
+  async function saveNotificationsConfig() {
+    var payload = currentNotificationsPayload();
+    await requestJson(NOTIFICATIONS_URL, {
+      method: "PUT",
+      headers: adminHeaders(),
+      body: JSON.stringify(payload)
+    }, true);
+  }
+
+  async function sendTestNotification() {
+    return await requestJson(NOTIFICATIONS_TEST_URL, {
+      method: "POST",
+      headers: adminHeaders()
+    }, true);
+  }
+
+  function upsertNotificationEndpoint() {
+    var values = notificationFormValues();
+    var validationMessage = notificationValidation(values);
+    if (validationMessage) {
+      showNotificationsMessage(validationMessage, true);
+      return false;
+    }
+
+    var payload = buildNotificationEndpointPayload(values);
+    var endpoints = (notificationsConfig.endpoints || []).slice();
+    if (notificationEditId) {
+      endpoints = endpoints.map(function (endpoint) {
+        return endpoint && endpoint.id === notificationEditId ? payload : endpoint;
+      });
+    } else {
+      endpoints.push(payload);
+    }
+    notificationsConfig.endpoints = endpoints;
+    renderNotificationsList();
+    renderNotificationsMeta();
+    applyNotificationAddMode();
+    updateActionAvailability();
+    return true;
+  }
+
+  function deleteNotificationEndpoint(endpointId) {
+    var endpoints = notificationsConfig.endpoints || [];
+    var endpoint = endpoints.find(function (item) { return item && item.id === endpointId; });
+    if (!endpoint) return;
+    var confirmed = window.confirm("Delete notification endpoint '" + endpoint.id + "'?");
+    if (!confirmed) return;
+    notificationsConfig.endpoints = endpoints.filter(function (item) {
+      return !item || item.id !== endpointId;
+    });
+    if (notificationEditId === endpointId) applyNotificationAddMode();
+    renderNotificationsList();
+    renderNotificationsMeta();
+    updateActionAvailability();
   }
 
   function selectedServiceIdList() {
@@ -918,6 +1297,20 @@
       input.disabled = !tokenReady || isLoading;
     });
 
+    notificationsLoadBtn.disabled = !tokenReady || isLoading;
+    notificationsEnabled.disabled = !tokenReady || isLoading;
+    notificationsSaveBtn.disabled = !tokenReady || isLoading;
+    notificationsTestBtn.disabled = !tokenReady || isLoading;
+    notificationResetBtn.disabled = !tokenReady || isLoading;
+    notificationCancelEditBtn.disabled = !tokenReady || isLoading;
+    Array.prototype.forEach.call(notificationForm.querySelectorAll("fieldset"), function (fieldset) {
+      fieldset.disabled = !tokenReady || isLoading;
+    });
+    notificationAddBtn.disabled = !tokenReady || isLoading;
+    Array.prototype.forEach.call(notificationsListBody.querySelectorAll("button[data-notification-action]"), function (button) {
+      button.disabled = !tokenReady || isLoading;
+    });
+
     var values = collectFormValues();
     var errors = getValidationErrors(values);
     renderValidation(errors);
@@ -1008,11 +1401,17 @@
 
     var sideLoads = await Promise.allSettled([
       refreshHealthPreview(),
-      loadAuditLog()
+      loadAuditLog(),
+      loadNotificationsConfig()
     ]);
 
     if (sideLoads[1].status !== "fulfilled") {
       setAuditMeta("Failed to load audit entries.");
+    }
+    if (sideLoads[2].status !== "fulfilled") {
+      renderNotificationsMeta();
+      renderNotificationsList();
+      showNotificationsMessage("Failed to load notifications config.", true);
     }
   }
 
@@ -1023,8 +1422,87 @@
     selectedServiceIds = {};
     if (currentServices.length > 0) renderServices(currentServices);
     renderAuditEntries();
+    renderNotificationsList();
+    hideNotificationsMessage();
     setAuditMeta("Authenticate to load.");
+    notificationsMeta.textContent = "Authenticate to load.";
     updateActionAvailability();
+  });
+
+  notificationsLoadBtn.addEventListener("click", async function () {
+    if (!hasToken()) return;
+    hideNotificationsMessage();
+    showError("");
+    await runAction(notificationsLoadBtn, "Loading...", async function () {
+      await loadNotificationsConfig();
+    });
+  });
+
+  notificationsSaveBtn.addEventListener("click", async function () {
+    if (!hasToken()) return;
+    hideNotificationsMessage();
+    showError("");
+    await runAction(notificationsSaveBtn, "Saving...", async function () {
+      await saveNotificationsConfig();
+      await loadNotificationsConfig();
+      showNotificationsMessage("Notifications config saved.", false);
+    });
+  });
+
+  notificationsTestBtn.addEventListener("click", async function () {
+    if (!hasToken()) return;
+    hideNotificationsMessage();
+    showError("");
+    await runAction(notificationsTestBtn, "Sending...", async function () {
+      var payload = await sendTestNotification();
+      var dispatched = payload && typeof payload.dispatched === "number" ? payload.dispatched : 0;
+      showNotificationsMessage("Test queued. dispatched=" + dispatched + ".", false);
+    });
+  });
+
+  notificationFields.auth_scheme.addEventListener("change", function () {
+    setNotificationAuthVisibility(true);
+    updateActionAvailability();
+  });
+
+  notificationForm.addEventListener("submit", function (evt) {
+    evt.preventDefault();
+    if (!hasToken() || isLoading) return;
+    hideNotificationsMessage();
+    var ok = upsertNotificationEndpoint();
+    if (ok) showNotificationsMessage("Endpoint staged. Save notifications to persist.", false);
+  });
+
+  notificationResetBtn.addEventListener("click", function () {
+    hideNotificationsMessage();
+    if (notificationEditId) {
+      applyNotificationEditMode(notificationEditId);
+      return;
+    }
+    applyNotificationAddMode();
+  });
+
+  notificationCancelEditBtn.addEventListener("click", function () {
+    hideNotificationsMessage();
+    applyNotificationAddMode();
+  });
+
+  notificationsListBody.addEventListener("click", function (evt) {
+    var button = evt.target.closest("button[data-notification-action]");
+    if (!button || !hasToken() || isLoading) return;
+    var row = button.closest("tr[data-notification-id]");
+    if (!row) return;
+    var endpointId = row.getAttribute("data-notification-id");
+    var action = button.getAttribute("data-notification-action");
+    hideNotificationsMessage();
+    if (action === "edit") {
+      applyNotificationEditMode(endpointId);
+      return;
+    }
+    if (action === "delete") {
+      deleteNotificationEndpoint(endpointId);
+      showNotificationsMessage("Endpoint removed from staged config. Save notifications to persist.", false);
+    }
   });
 
   loadServicesBtn.addEventListener("click", async function () {
@@ -1261,7 +1739,10 @@
 
   setAuthIndicator(false);
   applyAddMode(true);
+  applyNotificationAddMode();
   renderBulkSelectionMeta();
+  renderNotificationsMeta();
+  renderNotificationsList();
   updateConnectionDetail();
   updateActionAvailability();
 
