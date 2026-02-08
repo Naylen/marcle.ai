@@ -55,10 +55,12 @@ Public endpoint:
 
 Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 - `GET /api/admin/services`
+- `GET /api/admin/audit?limit=200`
 - `POST /api/admin/services`
 - `PUT /api/admin/services/{service_id}`
 - `DELETE /api/admin/services/{service_id}`
 - `POST /api/admin/services/{service_id}/toggle`
+- `POST /api/admin/services/bulk`
 
 `/api/status` returns normalized status for enabled services from `services.json`.
 Checks run in a background loop and `/api/status` returns the latest in-memory payload immediately.
@@ -112,6 +114,8 @@ Important:
 - `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
 - `OBSERVATIONS_PATH` points to persisted operational metadata (default `/data/observations.json`).
 - `OBSERVATIONS_HISTORY_LIMIT` caps stored incident history entries (default `200`).
+- `AUDIT_LOG_PATH` points to append-only admin audit JSONL (default `/data/audit.log`).
+- `AUDIT_LOG_MAX_BYTES` caps audit file size before trimming oldest lines (default `5242880`).
 - `EXPOSE_SERVICE_URLS` controls whether `/api/services/{id}` includes `url` (default `false`).
 - `FLAP_WINDOW_SECONDS` defines the flapping lookback window (default `600`).
 - `FLAP_THRESHOLD` defines minimum transitions in window for flapping (default `3`).

@@ -228,5 +228,24 @@ class ConfigStore:
             self._write_services_unlocked(services)
             return updated
 
+    def bulk_set_enabled(self, service_ids: list[str], enabled: bool) -> list[ServiceConfig]:
+        with self._lock:
+            target_ids = set(service_ids)
+            services = self._read_services_unlocked()
+            updated: list[ServiceConfig] = []
+            for i, existing in enumerate(services):
+                if existing.id not in target_ids:
+                    continue
+                if existing.enabled == enabled:
+                    updated_service = existing
+                else:
+                    updated_service = existing.model_copy(update={"enabled": enabled})
+                    services[i] = updated_service
+                updated.append(updated_service)
+            if not updated:
+                return []
+            self._write_services_unlocked(services)
+            return updated
+
 
 config_store = ConfigStore(config.SERVICES_CONFIG_PATH)

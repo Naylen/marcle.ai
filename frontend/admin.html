@@ -82,6 +82,53 @@
       </div>
     </section>
 
+    <section class="admin-panel" aria-labelledby="admin-audit-heading">
+      <div class="admin-panel-heading">
+        <h2 id="admin-audit-heading" class="admin-section-title">Audit Log</h2>
+        <div class="admin-actions-row admin-actions-row-inline">
+          <p id="audit-list-meta" class="admin-inline">Not loaded.</p>
+          <button id="audit-refresh-btn" class="admin-button admin-button-small admin-button-quiet" type="button" disabled>Refresh</button>
+        </div>
+      </div>
+
+      <div class="admin-audit-filters">
+        <div class="admin-field">
+          <label class="admin-label" for="audit-action-filter">Action</label>
+          <select id="audit-action-filter" class="admin-select">
+            <option value="">All actions</option>
+            <option value="create">create</option>
+            <option value="update">update</option>
+            <option value="delete">delete</option>
+            <option value="toggle">toggle</option>
+            <option value="bulk">bulk</option>
+          </select>
+        </div>
+        <div class="admin-field">
+          <label class="admin-label" for="audit-search-input">Service filter</label>
+          <input id="audit-search-input" class="admin-input" type="search" placeholder="service id">
+        </div>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table admin-audit-table">
+          <thead>
+            <tr>
+              <th scope="col">Time</th>
+              <th scope="col">Action</th>
+              <th scope="col">Target</th>
+              <th scope="col">Details</th>
+              <th scope="col">Source</th>
+            </tr>
+          </thead>
+          <tbody id="audit-table-body">
+            <tr>
+              <td class="admin-empty" colspan="5">Authenticate to load audit entries.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section class="admin-panel" aria-labelledby="service-form-heading">
       <div class="admin-panel-heading">
         <h2 id="service-form-heading" class="admin-section-title">Add Service</h2>

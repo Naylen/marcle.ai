@@ -9,13 +9,16 @@ from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
 from app import config
+from app.audit_log import audit_log_store
 from app.config_store import config_store
 from app.models import (
+    AdminAuditEntry,
+    AdminBulkServicesRequest,
     AdminServiceConfig,
     AdminServicesConfigResponse,
     AuthRef,
@@ -58,6 +61,7 @@ CHECK_TYPE_PROFILES: dict[str, dict] = {
 }
 MAX_INCIDENTS_LIMIT = 200
 DEFAULT_SERVICE_INCIDENTS_LIMIT = 20
+MAX_ADMIN_AUDIT_LIMIT = 500
 
 
 def _compute_overall(services) -> OverallStatus:
@@ -467,18 +471,87 @@ def _to_admin_service(service: ServiceConfig) -> AdminServiceConfig:
     return AdminServiceConfig.model_validate(payload)
 
 
+def _sanitize_audit_value(value: str | None, max_length: int) -> str | None:
+    if not value:
+        return None
+    compact = " ".join(value.replace("\r", " ").replace("\n", " ").split())
+    if not compact:
+        return None
+    return compact[:max_length]
+
+
+def _best_effort_client_ip(request: Request, x_forwarded_for: str | None) -> str | None:
+    if x_forwarded_for:
+        forwarded = x_forwarded_for.split(",")[0].strip()
+        cleaned_forwarded = _sanitize_audit_value(forwarded, max_length=128)
+        if cleaned_forwarded:
+            return cleaned_forwarded
+    client_host = request.client.host if request.client else None
+    return _sanitize_audit_value(client_host, max_length=128)
+
+
+async def _append_admin_audit_entry(
+    *,
+    action: str,
+    request: Request,
+    x_forwarded_for: str | None,
+    user_agent: str | None,
+    service_id: str | None = None,
+    ids: list[str] | None = None,
+    enabled: bool | None = None,
+) -> None:
+    payload: dict[str, Any] = {
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "action": action,
+        "service_id": service_id,
+        "ip": _best_effort_client_ip(request, x_forwarded_for),
+        "user_agent": _sanitize_audit_value(user_agent, max_length=512),
+    }
+    if ids is not None:
+        payload["ids"] = ids
+    if enabled is not None:
+        payload["enabled"] = enabled
+
+    try:
+        await asyncio.to_thread(audit_log_store.append, payload)
+    except Exception:
+        logger.warning("Failed to append admin audit entry for action=%s", action, exc_info=True)
+
+
 @app.get("/api/admin/services", response_model=AdminServicesConfigResponse)
 async def list_admin_services(_: None = Depends(_require_admin)):
     services = [_to_admin_service(service) for service in config_store.list_services()]
     return AdminServicesConfigResponse(services=services)
 
 
+@app.get("/api/admin/audit", response_model=list[AdminAuditEntry])
+async def get_admin_audit(
+    limit: int = Query(default=200, ge=1),
+    _: None = Depends(_require_admin),
+):
+    bounded_limit = min(limit, MAX_ADMIN_AUDIT_LIMIT)
+    return await asyncio.to_thread(audit_log_store.recent, bounded_limit)
+
+
 @app.post("/api/admin/services", response_model=AdminServiceConfig, status_code=status.HTTP_201_CREATED)
-async def create_admin_service(service: ServiceConfig, _: None = Depends(_require_admin)):
+async def create_admin_service(
+    service: ServiceConfig,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
     try:
         config_store.create_service(service)
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await _append_admin_audit_entry(
+        action="create",
+        service_id=service.id,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
     await _invalidate_and_refresh()
     return _to_admin_service(service)
 
@@ -487,29 +560,91 @@ async def create_admin_service(service: ServiceConfig, _: None = Depends(_requir
 async def upsert_admin_service(
     service_id: str,
     service: ServiceConfig,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
     if service_id != service.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="service_id must match body id")
     config_store.upsert_service(service)
+    await _append_admin_audit_entry(
+        action="update",
+        service_id=service.id,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
     await _invalidate_and_refresh()
     return _to_admin_service(service)
 
 
 @app.delete("/api/admin/services/{service_id}", response_model=AdminServiceConfig)
-async def delete_admin_service(service_id: str, _: None = Depends(_require_admin)):
+async def delete_admin_service(
+    service_id: str,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
     removed = config_store.delete_service(service_id)
     if removed is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    await _append_admin_audit_entry(
+        action="delete",
+        service_id=removed.id,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
     await _invalidate_and_refresh()
     return _to_admin_service(removed)
 
 
+@app.post("/api/admin/services/bulk", response_model=AdminServicesConfigResponse)
+async def bulk_admin_services(
+    payload: AdminBulkServicesRequest,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
+    updated = config_store.bulk_set_enabled(payload.ids, payload.enabled)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No matching services found")
+    await _append_admin_audit_entry(
+        action="bulk",
+        service_id=None,
+        ids=payload.ids,
+        enabled=payload.enabled,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
+    await _invalidate_and_refresh()
+    services = [_to_admin_service(service) for service in updated]
+    return AdminServicesConfigResponse(services=services)
+
+
 @app.post("/api/admin/services/{service_id}/toggle", response_model=AdminServiceConfig)
-async def toggle_admin_service(service_id: str, _: None = Depends(_require_admin)):
+async def toggle_admin_service(
+    service_id: str,
+    request: Request,
+    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    user_agent: str | None = Header(default=None, alias="User-Agent"),
+    _: None = Depends(_require_admin),
+):
     updated = config_store.toggle_service(service_id)
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+    await _append_admin_audit_entry(
+        action="toggle",
+        service_id=updated.id,
+        enabled=updated.enabled,
+        request=request,
+        x_forwarded_for=x_forwarded_for,
+        user_agent=user_agent,
+    )
     await _invalidate_and_refresh()
     return _to_admin_service(updated)
 

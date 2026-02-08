@@ -919,6 +919,12 @@ body.admin-modal-open {
   gap: 0.5rem;
 }
 
+.admin-actions-row-inline {
+  margin-top: 0;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .admin-button {
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
@@ -1026,6 +1032,10 @@ body.admin-modal-open {
   min-width: 52rem;
   font-family: var(--font-mono);
   font-size: 0.72rem;
+}
+
+.admin-audit-table {
+  min-width: 64rem;
 }
 
 .admin-table th {
@@ -1163,6 +1173,48 @@ body.admin-modal-open {
   padding: 1rem;
 }
 
+.admin-audit-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+  gap: 0.62rem;
+  margin-bottom: 0.72rem;
+}
+
+.admin-audit-target {
+  display: block;
+  color: var(--text);
+  font-size: 0.72rem;
+}
+
+.admin-audit-detail {
+  display: block;
+  color: var(--text-dim);
+  font-size: 0.64rem;
+}
+
+.admin-audit-detail-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.48rem;
+}
+
+.admin-audit-source {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.admin-audit-source .admin-table-text {
+  font-size: 0.64rem;
+}
+
+.admin-copy-json {
+  width: auto;
+  min-width: 5rem;
+  font-size: 0.62rem;
+  padding: 0.24rem 0.44rem;
+}
+
 .admin-fieldset {
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -1263,6 +1315,10 @@ body.admin-modal-open {
   .admin-table {
     min-width: 45rem;
   }
+
+  .admin-audit-table {
+    min-width: 56rem;
+  }
 }
 
 @media (max-width: 640px) {
@@ -1277,6 +1333,10 @@ body.admin-modal-open {
 
   .admin-table {
     min-width: 39rem;
+  }
+
+  .admin-audit-table {
+    min-width: 50rem;
   }
 
   .admin-health-widget {

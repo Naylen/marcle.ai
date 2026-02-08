@@ -17,6 +17,7 @@ services:
       - .env
     environment:
       - SERVICES_CONFIG_PATH=/data/services.json
+      - AUDIT_LOG_PATH=/data/audit.log
     volumes:
       - ./data:/data
     healthcheck:

@@ -3,9 +3,11 @@
 
   var API_BASE = window.MARCLE_API_BASE || "";
   var ADMIN_URL = API_BASE + "/api/admin/services";
+  var AUDIT_URL = API_BASE + "/api/admin/audit";
   var STATUS_URL = API_BASE + "/api/status";
   var OVERVIEW_URL = API_BASE + "/api/overview";
   var HEALTH_POLL_INTERVAL = 60000;
+  var AUDIT_POLL_INTERVAL = 45000;
 
   var tokenInput = document.getElementById("admin-token");
   var loadServicesBtn = document.getElementById("load-services-btn");
@@ -23,6 +25,11 @@
 
   var serviceListBody = document.getElementById("service-list-body");
   var serviceListMeta = document.getElementById("service-list-meta");
+  var auditTableBody = document.getElementById("audit-table-body");
+  var auditListMeta = document.getElementById("audit-list-meta");
+  var auditRefreshBtn = document.getElementById("audit-refresh-btn");
+  var auditActionFilter = document.getElementById("audit-action-filter");
+  var auditSearchInput = document.getElementById("audit-search-input");
 
   var serviceForm = document.getElementById("service-form");
   var serviceFormHeading = document.getElementById("service-form-heading");
@@ -64,7 +71,8 @@
     auth_header_name: document.getElementById("service-auth-header-name-error")
   };
 
-  if (!tokenInput || !loadServicesBtn || !serviceListBody || !serviceForm || !saveServiceBtn) {
+  if (!tokenInput || !loadServicesBtn || !serviceListBody || !serviceForm || !saveServiceBtn ||
+      !auditTableBody || !auditListMeta || !auditRefreshBtn || !auditActionFilter || !auditSearchInput) {
     return;
   }
 
@@ -78,6 +86,7 @@
   var servicesById = {};
   var currentServices = [];
   var healthById = {};
+  var auditEntries = [];
   var latestStatusPayload = null;
   var latestOverviewPayload = null;
   var editServiceId = null;
@@ -137,6 +146,28 @@
     return humanizeDuration(ageSeconds) + " ago";
   }
 
+  function formatAuditTimestamp(isoTimestamp) {
+    var parsed = parseIso(isoTimestamp);
+    if (!parsed) return "--";
+    return parsed.toLocaleString();
+  }
+
+  function normalizeAuditAction(value) {
+    if (!value || typeof value !== "string") return "";
+    var lowered = value.toLowerCase();
+    if (lowered === "create" || lowered === "update" || lowered === "delete" ||
+        lowered === "toggle" || lowered === "bulk") {
+      return lowered;
+    }
+    return "";
+  }
+
+  function truncateValue(value, maxLen) {
+    if (!value || typeof value !== "string") return "";
+    if (value.length <= maxLen) return value;
+    return value.slice(0, maxLen - 3) + "...";
+  }
+
   function showError(message) {
     if (!message) {
       errorBox.textContent = "";
@@ -170,10 +201,12 @@
     if (isAuthenticated) {
       authStatusIndicator.textContent = "Authenticated";
       authStatusIndicator.className = "admin-chip admin-chip-success";
+      renderAuditEntries();
       return;
     }
     authStatusIndicator.textContent = "Not authenticated";
     authStatusIndicator.className = "admin-chip admin-chip-muted";
+    renderAuditEntries();
   }
 
   function setHealthNote(message, isWarning) {
@@ -476,6 +509,107 @@
     serviceListMeta.textContent = count + " services loaded.";
   }
 
+  function setAuditMeta(message) {
+    auditListMeta.textContent = message;
+  }
+
+  function getAuditFilteredEntries() {
+    var actionFilter = (auditActionFilter.value || "").trim().toLowerCase();
+    var search = (auditSearchInput.value || "").trim().toLowerCase();
+
+    return auditEntries.filter(function (entry) {
+      var action = normalizeAuditAction(entry && entry.action);
+      if (actionFilter && action !== actionFilter) return false;
+
+      if (!search) return true;
+      var serviceId = entry && typeof entry.service_id === "string" ? entry.service_id.toLowerCase() : "";
+      var ids = Array.isArray(entry && entry.ids) ? entry.ids.join(" ").toLowerCase() : "";
+      return serviceId.indexOf(search) !== -1 || ids.indexOf(search) !== -1;
+    });
+  }
+
+  function auditDetailsForEntry(entry) {
+    var action = normalizeAuditAction(entry && entry.action);
+    if (action === "bulk") {
+      var ids = Array.isArray(entry && entry.ids) ? entry.ids : [];
+      var enabled = typeof entry.enabled === "boolean" ? String(entry.enabled) : "--";
+      return "enabled=" + enabled + " ids=[" + ids.join(", ") + "]";
+    }
+    if (action === "toggle") {
+      return typeof entry.enabled === "boolean" ? "enabled=" + String(entry.enabled) : "--";
+    }
+    return "--";
+  }
+
+  function auditSourceForEntry(entry) {
+    var ip = entry && typeof entry.ip === "string" ? entry.ip : "--";
+    var userAgent = entry && typeof entry.user_agent === "string" ? entry.user_agent : "--";
+    return {
+      ip: truncateValue(ip, 128),
+      userAgent: truncateValue(userAgent, 160)
+    };
+  }
+
+  function renderAuditEntries() {
+    if (!isAuthenticated) {
+      auditTableBody.innerHTML = "<tr><td class='admin-empty' colspan='5'>Authenticate to load audit entries.</td></tr>";
+      setAuditMeta("Authenticate to load.");
+      return;
+    }
+
+    if (!auditEntries.length) {
+      auditTableBody.innerHTML = "<tr><td class='admin-empty' colspan='5'>No audit entries found.</td></tr>";
+      setAuditMeta("0 entries.");
+      return;
+    }
+
+    var filtered = getAuditFilteredEntries();
+    if (!filtered.length) {
+      auditTableBody.innerHTML = "<tr><td class='admin-empty' colspan='5'>No rows match current filters.</td></tr>";
+      setAuditMeta("0 entries shown of " + auditEntries.length + ".");
+      return;
+    }
+
+    auditTableBody.innerHTML = filtered.map(function (entry, index) {
+      var action = normalizeAuditAction(entry && entry.action) || "unknown";
+      var target = entry && typeof entry.service_id === "string" ? entry.service_id : "bulk";
+      var details = auditDetailsForEntry(entry);
+      var source = auditSourceForEntry(entry);
+
+      return (
+        "<tr data-audit-index='" + index + "'>" +
+          "<td><span class='admin-table-text'>" + escapeHtml(formatAuditTimestamp(entry && entry.ts)) + "</span></td>" +
+          "<td><span class='admin-status-badge unknown'>" + escapeHtml(action) + "</span></td>" +
+          "<td><span class='admin-audit-target'>" + escapeHtml(target) + "</span></td>" +
+          "<td><div class='admin-audit-detail-wrap'>" +
+            "<span class='admin-audit-detail'>" + escapeHtml(details) + "</span>" +
+            "<button type='button' class='admin-button admin-button-quiet admin-copy-json' data-action='copy-json' aria-label='Copy audit row JSON'>Copy JSON</button>" +
+          "</div></td>" +
+          "<td><div class='admin-audit-source'>" +
+            "<span class='admin-table-text'>" + escapeHtml(source.ip) + "</span>" +
+            "<span class='admin-table-text'>" + escapeHtml(source.userAgent) + "</span>" +
+          "</div></td>" +
+        "</tr>"
+      );
+    }).join("");
+    setAuditMeta(filtered.length + " entries shown of " + auditEntries.length + ".");
+  }
+
+  async function copyAuditRowJson(entry) {
+    var serialized = JSON.stringify(entry);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(serialized);
+      return;
+    }
+
+    var textArea = document.createElement("textarea");
+    textArea.value = serialized;
+    document.body.appendChild(textArea);
+    textArea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textArea);
+  }
+
   function actionDisabledAttr() {
     return (!hasToken() || isLoading) ? " disabled" : "";
   }
@@ -692,6 +826,7 @@
     var tokenReady = hasToken();
 
     loadServicesBtn.disabled = !tokenReady || isLoading;
+    auditRefreshBtn.disabled = !tokenReady || isLoading;
     Array.prototype.forEach.call(serviceForm.querySelectorAll("fieldset"), function (fieldset) {
       fieldset.disabled = !tokenReady || isLoading;
     });
@@ -745,6 +880,12 @@
     setHealthNote("Public health preview unavailable.", true);
   }
 
+  async function loadAuditLog() {
+    var payload = await requestJson(AUDIT_URL + "?limit=200", { headers: adminHeaders() }, true);
+    auditEntries = Array.isArray(payload) ? payload : [];
+    renderAuditEntries();
+  }
+
   async function loadServicesAndStatus() {
     var payload = await requestJson(ADMIN_URL, { headers: adminHeaders() }, true);
     var services = payload && Array.isArray(payload.services) ? payload.services : [];
@@ -754,12 +895,22 @@
       applyAddMode(true);
     }
 
-    await refreshHealthPreview();
+    var sideLoads = await Promise.allSettled([
+      refreshHealthPreview(),
+      loadAuditLog()
+    ]);
+
+    if (sideLoads[1].status !== "fulfilled") {
+      setAuditMeta("Failed to load audit entries.");
+    }
   }
 
   tokenInput.addEventListener("input", function () {
     setAuthIndicator(false);
     showError("");
+    auditEntries = [];
+    renderAuditEntries();
+    setAuditMeta("Authenticate to load.");
     updateActionAvailability();
   });
 
@@ -887,6 +1038,42 @@
     if (action === "delete") openDeleteModal(serviceId);
   });
 
+  auditRefreshBtn.addEventListener("click", async function () {
+    if (!hasToken()) return;
+    showError("");
+
+    await runAction(auditRefreshBtn, "Refreshing...", async function () {
+      await loadAuditLog();
+    });
+  });
+
+  auditActionFilter.addEventListener("change", function () {
+    renderAuditEntries();
+  });
+
+  auditSearchInput.addEventListener("input", function () {
+    renderAuditEntries();
+  });
+
+  auditTableBody.addEventListener("click", async function (evt) {
+    var button = evt.target.closest("button[data-action='copy-json']");
+    if (!button) return;
+
+    var row = button.closest("tr[data-audit-index]");
+    if (!row) return;
+
+    var filtered = getAuditFilteredEntries();
+    var index = Number(row.getAttribute("data-audit-index"));
+    if (!isFinite(index) || index < 0 || index >= filtered.length) return;
+
+    try {
+      await copyAuditRowJson(filtered[index]);
+      setAuditMeta("Copied row JSON.");
+    } catch (_err) {
+      setAuditMeta("Unable to copy row JSON.");
+    }
+  });
+
   deleteCancelBtn.addEventListener("click", function () {
     if (isLoading) return;
     closeDeleteModal();
@@ -936,4 +1123,10 @@
 
   refreshHealthPreview();
   setInterval(refreshHealthPreview, HEALTH_POLL_INTERVAL);
+  setInterval(function () {
+    if (!hasToken() || !isAuthenticated || isLoading) return;
+    loadAuditLog().catch(function () {
+      setAuditMeta("Failed to refresh audit entries.");
+    });
+  }, AUDIT_POLL_INTERVAL);
 })();

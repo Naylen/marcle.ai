@@ -101,3 +101,36 @@ class AdminServiceConfig(ServiceConfig):
 
 class AdminServicesConfigResponse(BaseModel):
     services: list[AdminServiceConfig]
+
+
+class AdminBulkServicesRequest(BaseModel):
+    ids: list[str] = Field(min_length=1)
+    enabled: bool
+
+    @field_validator("ids", mode="before")
+    @classmethod
+    def normalize_ids(cls, value):
+        if not isinstance(value, list):
+            return value
+
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            if not isinstance(item, str):
+                continue
+            service_id = item.strip()
+            if not service_id or service_id in seen:
+                continue
+            normalized.append(service_id)
+            seen.add(service_id)
+        return normalized
+
+
+class AdminAuditEntry(BaseModel):
+    ts: datetime
+    action: Literal["create", "update", "delete", "toggle", "bulk"]
+    service_id: Optional[str] = None
+    ids: Optional[list[str]] = None
+    enabled: Optional[bool] = None
+    ip: Optional[str] = None
+    user_agent: Optional[str] = None
