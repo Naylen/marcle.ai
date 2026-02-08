@@ -82,19 +82,28 @@
     statusGrid.innerHTML = data.services.map(function (svc) {
       var latency = svc.latency_ms != null ? svc.latency_ms + 'ms' : '—';
       var group = svc.group || '';
+      var statusValue = svc.status || 'unknown';
       var changeLabel = getChangeLabel(svc, overviewByService[svc.id]);
       var changeMarkup = changeLabel
         ? '<span class="status-card-change">' + escapeHtml(changeLabel) + '</span>'
         : '';
       var serviceId = svc.id || '';
       return (
-        '<button type="button" class="status-card status-card-button" data-service-id="' + escapeAttribute(serviceId) + '" aria-label="Open details for ' + escapeAttribute(svc.name || serviceId) + '">' +
-          '<div class="status-card-header">' +
-            '<span class="status-card-name">' + escapeHtml(svc.name) + '</span>' +
-            '<span class="status-indicator ' + escapeHtml(svc.status) + '"></span>' +
+        '<button type="button" class="status-card status-card-button" data-service-id="' + escapeAttribute(serviceId) + '" data-status="' + escapeAttribute(statusValue) + '" aria-label="Open details for ' + escapeAttribute(svc.name || serviceId) + ' — status: ' + escapeAttribute(statusValue) + '">' +
+          '<div class="status-card-top">' +
+            '<span class="status-card-group">' + escapeHtml(group) + '</span>' +
+            '<div style="display:flex;align-items:center;gap:0.35rem">' +
+              '<span class="status-card-status-label ' + escapeHtml(statusValue) + '">' + escapeHtml(statusValue) + '</span>' +
+              '<span class="status-indicator ' + escapeHtml(statusValue) + '"></span>' +
+            '</div>' +
           '</div>' +
-          '<span class="status-card-detail">' + escapeHtml(group) + ' · ' + latency + '</span>' +
-          changeMarkup +
+          '<div class="status-card-main">' +
+            '<span class="status-card-name">' + escapeHtml(svc.name) + '</span>' +
+          '</div>' +
+          '<div class="status-card-meta">' +
+            '<span class="status-card-latency">' + latency + '</span>' +
+            changeMarkup +
+          '</div>' +
         '</button>'
       );
     }).join('');
@@ -109,6 +118,16 @@
     }
 
     overviewShell.classList.remove('is-hidden');
+
+    // Determine overall status for accent
+    var overall = (overviewData.overall_status || (statusData && statusData.overall_status) || 'unknown');
+
+    // Apply accent to overview cards
+    var overviewCards = overviewShell.querySelectorAll('.overview-card');
+    overviewCards.forEach(function (card) {
+      card.classList.remove('accent-healthy', 'accent-degraded', 'accent-down', 'accent-unknown');
+      card.classList.add('accent-' + overall);
+    });
 
     var counts = overviewData.counts || {};
     if (overviewTotal) {
@@ -147,8 +166,18 @@
     var ageSeconds = secondsSinceIso(incident.at);
     var ago = ageSeconds == null ? 'unknown time' : humanizeDuration(ageSeconds) + ' ago';
     var serviceName = serviceNameForId(statusData, incident.service_id);
-    incidentBanner.textContent = serviceName + ' changed: ' + incident.from + ' -> ' + incident.to + ' (' + ago + ')';
-    incidentBanner.classList.remove('is-hidden');
+    incidentBanner.textContent = serviceName + ' changed: ' + incident.from + ' \u2192 ' + incident.to + ' (' + ago + ')';
+
+    // Apply severity styling
+    var bannerClass = classifyIncident(incident);
+    incidentBanner.className = 'incident-banner';
+    if (bannerClass === 'incident--bad') {
+      incidentBanner.classList.add('banner--bad');
+    } else if (bannerClass === 'incident--recovery') {
+      incidentBanner.classList.add('banner--recovery');
+    } else if (incident.to === 'degraded') {
+      incidentBanner.classList.add('banner--degraded');
+    }
   }
 
   function buildOverviewIndex(overviewData) {
@@ -297,10 +326,16 @@
     if (drawerTitle) {
       drawerTitle.textContent = title || 'Service Details';
     }
+    var normalizedStatus = typeof statusValue === 'string' ? statusValue : 'unknown';
     if (drawerStatusPill) {
-      var normalizedStatus = typeof statusValue === 'string' ? statusValue : 'unknown';
       drawerStatusPill.className = 'drawer-status-pill ' + normalizedStatus;
       drawerStatusPill.textContent = normalizedStatus;
+    }
+    // Apply accent to header
+    var header = drawerPanel ? drawerPanel.querySelector('.service-drawer-header') : null;
+    if (header) {
+      header.classList.remove('accent-healthy', 'accent-degraded', 'accent-down', 'accent-unknown');
+      header.classList.add('accent-' + normalizedStatus);
     }
   }
 
@@ -364,7 +399,7 @@
       var relative = incident && incident.at ? formatRelativeTime(incident.at) : 'unknown time';
       return (
         '<li class="drawer-incident ' + incidentClass + '">' +
-          '<span class="drawer-incident-flow">' + escapeHtml(fromStatus) + ' -> ' + escapeHtml(toStatus) + '</span>' +
+          '<span class="drawer-incident-flow">' + escapeHtml(fromStatus) + ' \u2192 ' + escapeHtml(toStatus) + '</span>' +
           '<span class="drawer-incident-time">' + escapeHtml(relative) + '</span>' +
         '</li>'
       );

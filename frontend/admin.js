@@ -496,12 +496,13 @@
 
     var normalizedStatus = normalizeStatus(health.status);
     var latency = health.latency_ms != null ? health.latency_ms + "ms" : "--";
-    var checked = formatRelativeTime(health.last_checked);
+    var checked = health.last_checked ? formatRelativeTime(health.last_checked) : "--";
 
     return {
       statusClass: normalizedStatus,
       statusLabel: titleCase(normalizedStatus),
-      meta: latency + " / " + checked
+      latency: latency,
+      checked: checked
     };
   }
 
@@ -643,10 +644,13 @@
             "<span class='admin-service-name'>" + escapeHtml(accessibleName) + "</span>" +
             "<span class='admin-service-id'>" + escapeHtml(service.id) + "</span>" +
           "</td>" +
-          "<td><span class='admin-table-text'>" + escapeHtml(service.group || "") + "</span></td>" +
+          "<td><span class='admin-chip admin-chip-muted'>" + escapeHtml(service.group || "core") + "</span></td>" +
           "<td><div class='admin-health-preview'>" +
             "<span class='admin-status-badge " + escapeHtml(healthPreview.statusClass) + "'>" + escapeHtml(healthPreview.statusLabel) + "</span>" +
-            "<span class='admin-health-meta'>" + escapeHtml(healthPreview.meta) + "</span>" +
+            "<div class='admin-health-meta-stack'>" +
+              "<span class='admin-health-latency'>" + escapeHtml(healthPreview.latency) + "</span>" +
+              "<span class='admin-health-checked'>" + escapeHtml(healthPreview.checked) + "</span>" +
+            "</div>" +
           "</div></td>" +
           "<td><button type='button' class='admin-toggle-button " + (service.enabled ? "is-enabled" : "is-disabled") + "' data-action='toggle' aria-label='Toggle enabled for " + escapeHtml(accessibleName) + " (currently " + enabledState + ")'" + disabledAttr + ">" + escapeHtml(toggleLabel) + "</button></td>" +
           "<td><span class='admin-chip " + authBadge.className + "'>" + escapeHtml(authBadge.label) + "</span></td>" +
