@@ -383,6 +383,7 @@
                 <option value="bearer">bearer</option>
                 <option value="basic">basic</option>
                 <option value="header">header</option>
+                <option value="query_param">query_param</option>
               </select>
               <p id="service-auth-scheme-error" class="admin-field-error" aria-live="polite"></p>
             </div>
@@ -397,6 +398,12 @@
               <label class="admin-label" for="service-auth-header-name">Header name</label>
               <input id="service-auth-header-name" name="auth_header_name" class="admin-input" placeholder="X-Api-Key" aria-describedby="service-auth-header-name-error">
               <p id="service-auth-header-name-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div id="service-auth-param-wrap" class="admin-field is-hidden">
+              <label class="admin-label" for="service-auth-param-name">Query param name</label>
+              <input id="service-auth-param-name" name="auth_param_name" class="admin-input" placeholder="apikey" aria-describedby="service-auth-param-name-error">
+              <p id="service-auth-param-name-error" class="admin-field-error" aria-live="polite"></p>
             </div>
           </div>
 

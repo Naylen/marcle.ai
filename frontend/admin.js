@@ -78,6 +78,7 @@
   var serviceIdNote = document.getElementById("service-id-note");
   var serviceAuthEnvWrap = document.getElementById("service-auth-env-wrap");
   var serviceAuthHeaderWrap = document.getElementById("service-auth-header-wrap");
+  var serviceAuthParamWrap = document.getElementById("service-auth-param-wrap");
 
   var deleteModalBackdrop = document.getElementById("delete-modal-backdrop");
   var deleteModal = document.getElementById("delete-modal");
@@ -95,7 +96,8 @@
     check_type: document.getElementById("service-check-type"),
     auth_scheme: document.getElementById("service-auth-scheme"),
     auth_env: document.getElementById("service-auth-env"),
-    auth_header_name: document.getElementById("service-auth-header-name")
+    auth_header_name: document.getElementById("service-auth-header-name"),
+    auth_param_name: document.getElementById("service-auth-param-name")
   };
 
   var fieldErrorNodes = {
@@ -105,7 +107,8 @@
     url: document.getElementById("service-url-error"),
     check_type: document.getElementById("service-check-type-error"),
     auth_env: document.getElementById("service-auth-env-error"),
-    auth_header_name: document.getElementById("service-auth-header-name-error")
+    auth_header_name: document.getElementById("service-auth-header-name-error"),
+    auth_param_name: document.getElementById("service-auth-param-name-error")
   };
 
   if (!tokenInput || !loadServicesBtn || !authStatusIndicator || !serviceListBody ||
@@ -715,7 +718,8 @@
       check_type: formFields.check_type.value.trim(),
       auth_scheme: formFields.auth_scheme.value.trim() || "none",
       auth_env: formFields.auth_env.value.trim(),
-      auth_header_name: formFields.auth_header_name.value.trim()
+      auth_header_name: formFields.auth_header_name.value.trim(),
+      auth_param_name: formFields.auth_param_name.value.trim()
     };
   }
 
@@ -757,6 +761,9 @@
     if (values.auth_scheme === "header" && !values.auth_header_name) {
       errors.auth_header_name = "Header name is required for header auth.";
     }
+    if (values.auth_scheme === "query_param" && !values.auth_param_name) {
+      errors.auth_param_name = "Query param name is required for query param auth.";
+    }
 
     return errors;
   }
@@ -769,6 +776,7 @@
     var shouldShow = !!message && (hasTriedSave || touchedFields[fieldName]);
     if (fieldName === "auth_env" && serviceAuthEnvWrap.classList.contains("is-hidden")) shouldShow = false;
     if (fieldName === "auth_header_name" && serviceAuthHeaderWrap.classList.contains("is-hidden")) shouldShow = false;
+    if (fieldName === "auth_param_name" && serviceAuthParamWrap.classList.contains("is-hidden")) shouldShow = false;
 
     errorNode.textContent = shouldShow ? message : "";
     field.setAttribute("aria-invalid", shouldShow ? "true" : "false");
@@ -794,13 +802,34 @@
     var scheme = formFields.auth_scheme.value || "none";
     var showEnv = scheme !== "none";
     var showHeader = scheme === "header";
+    var showParam = scheme === "query_param";
 
     serviceAuthEnvWrap.classList.toggle("is-hidden", !showEnv);
     serviceAuthHeaderWrap.classList.toggle("is-hidden", !showHeader);
+    serviceAuthParamWrap.classList.toggle("is-hidden", !showParam);
 
     if (clearHiddenValues) {
       if (!showEnv) formFields.auth_env.value = "";
       if (!showHeader) formFields.auth_header_name.value = "";
+      if (!showParam) formFields.auth_param_name.value = "";
+    }
+  }
+
+  function maybeDefaultAuthForCheckType(checkType) {
+    var normalizedType = String(checkType || "").trim().toLowerCase();
+    var scheme = (formFields.auth_scheme.value || "none").trim().toLowerCase();
+
+    if (normalizedType === "tautulli" && (scheme === "" || scheme === "none")) {
+      formFields.auth_scheme.value = "query_param";
+
+      if (!formFields.auth_env.value || !formFields.auth_env.value.trim()) {
+        formFields.auth_env.value = "TAUTULLI_API_KEY";
+      }
+      if (!formFields.auth_param_name.value || !formFields.auth_param_name.value.trim()) {
+        formFields.auth_param_name.value = "apikey";
+      }
+
+      setAuthFieldVisibility(false);
     }
   }
 
@@ -813,6 +842,7 @@
     };
 
     if (values.auth_scheme === "header") authRef.header_name = values.auth_header_name;
+    if (values.auth_scheme === "query_param") authRef.param_name = values.auth_param_name;
     return authRef;
   }
 
@@ -1240,9 +1270,11 @@
       formFields.auth_scheme.value = "none";
       formFields.auth_env.value = "";
       formFields.auth_header_name.value = "";
+      formFields.auth_param_name.value = "";
     }
 
     clearValidation();
+    maybeDefaultAuthForCheckType(formFields.check_type.value);
     setAuthFieldVisibility(true);
     updateActionAvailability();
   }
@@ -1274,8 +1306,10 @@
     formFields.auth_scheme.value = authRef && authRef.scheme ? authRef.scheme : "none";
     formFields.auth_env.value = authRef && authRef.env ? authRef.env : "";
     formFields.auth_header_name.value = authRef && authRef.header_name ? authRef.header_name : "";
+    formFields.auth_param_name.value = authRef && authRef.param_name ? authRef.param_name : "";
 
     clearValidation();
+    maybeDefaultAuthForCheckType(formFields.check_type.value);
     setAuthFieldVisibility(false);
     updateActionAvailability();
     formFields.name.focus();
@@ -1597,6 +1631,16 @@
   formFields.auth_scheme.addEventListener("change", function () {
     touchedFields.auth_scheme = true;
     setAuthFieldVisibility(true);
+    updateActionAvailability();
+  });
+
+  formFields.check_type.addEventListener("change", function () {
+    maybeDefaultAuthForCheckType(formFields.check_type.value);
+    updateActionAvailability();
+  });
+
+  formFields.check_type.addEventListener("input", function () {
+    maybeDefaultAuthForCheckType(formFields.check_type.value);
     updateActionAvailability();
   });
 
