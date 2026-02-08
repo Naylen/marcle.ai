@@ -93,7 +93,7 @@
       "id": "tautulli",
       "name": "Tautulli",
       "group": "media",
-      "url": "",
+      "url": "http://172.16.1.195:8181",
       "check_type": "tautulli",
       "enabled": true,
       "icon": "tautulli.svg",
