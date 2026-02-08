@@ -293,6 +293,10 @@ async def _invalidate_and_refresh() -> None:
 async def _lifespan(_: FastAPI):
     _log_startup_env_warnings()
     await _set_startup_payload()
+    # Initialize Ask DB
+    from app.ask_db import init_db as _ask_init_db
+    await asyncio.to_thread(_ask_init_db)
+    logger.info("Ask database initialized")
     refresh_task = asyncio.create_task(_refresh_loop(), name="status-refresh-loop")
     try:
         yield
@@ -304,7 +308,7 @@ async def _lifespan(_: FastAPI):
 
 # --- App ---
 app = FastAPI(
-    title="marcle.ai status",
+    title="marcle.ai",
     version="1.0.0",
     docs_url=None,
     redoc_url=None,
@@ -317,8 +321,12 @@ if config.CORS_ORIGINS:
         CORSMiddleware,
         allow_origins=config.CORS_ORIGINS,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Webhook-Secret"],
     )
+
+# --- Include Ask router ---
+from app.routers.ask import router as ask_router  # noqa: E402
+app.include_router(ask_router)
 
 
 def _apply_url_visibility(payload: dict[str, Any]) -> dict[str, Any]:

@@ -40,3 +40,11 @@ mnt/
 data/observations.json
 backend/observations.json
 observations.json
+
+# SQLite databases
+data/ask.db
+data/ask.db-wal
+data/ask.db-shm
+*.db
+*.db-wal
+*.db-shm

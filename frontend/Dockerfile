@@ -9,4 +9,7 @@ COPY admin.js /usr/share/nginx/html/
 COPY styles.css /usr/share/nginx/html/
 COPY status.js /usr/share/nginx/html/
 
+# Ask app
+COPY ask/ /usr/share/nginx/html/ask/
+
 EXPOSE 80
