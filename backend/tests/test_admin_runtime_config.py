@@ -1,8 +1,10 @@
+import asyncio
+
 from fastapi.testclient import TestClient
 
-from app.cache import cache
 from app.main import app
 from app.models import AuthRef, ServiceConfig, ServiceGroup
+from app.state import state
 import app.main as main_module
 
 
@@ -52,10 +54,14 @@ def _service(service_id: str, enabled: bool = True) -> ServiceConfig:
     )
 
 
+def _reset_state() -> None:
+    asyncio.run(state.clear_cached_payload())
+
+
 def test_admin_requires_auth_header(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("svc-a")]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")
-    cache.clear()
+    _reset_state()
 
     client = TestClient(app)
     response = client.get("/api/admin/services")
@@ -66,7 +72,7 @@ def test_admin_requires_auth_header(monkeypatch):
 def test_admin_delete_and_toggle(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("svc-a"), _service("svc-b")]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")
-    cache.clear()
+    _reset_state()
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer admin-token"}
@@ -90,7 +96,7 @@ def test_admin_delete_and_toggle(monkeypatch):
 def test_admin_create_and_update_service_with_auth_ref(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("svc-a")]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")
-    cache.clear()
+    _reset_state()
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer admin-token"}
@@ -153,7 +159,7 @@ def test_admin_credential_present_computed(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([with_auth, no_auth]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")
     monkeypatch.delenv("MISSING_ENV", raising=False)
-    cache.clear()
+    _reset_state()
 
     client = TestClient(app)
     headers = {"Authorization": "Bearer admin-token"}
@@ -182,7 +188,7 @@ def test_status_response_does_not_include_credential_present(monkeypatch):
         auth_ref=AuthRef(scheme="bearer", env="SOME_ENV"),
     )
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
-    cache.clear()
+    _reset_state()
 
     client = TestClient(app)
     response = client.get("/api/status")

@@ -1,10 +1,11 @@
+import asyncio
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 
-from app.cache import cache
 from app.main import app
 from app.models import AuthRef, ServiceConfig, ServiceGroup
+from app.state import state
 import app.main as main_module
 
 
@@ -38,6 +39,10 @@ def _service_with_auth(auth_ref: AuthRef | None) -> ServiceConfig:
     )
 
 
+def _reset_state() -> None:
+    asyncio.run(state.clear_cached_payload())
+
+
 def test_status_is_unknown_when_auth_env_is_missing(monkeypatch):
     service = _service_with_auth(AuthRef(scheme="bearer", env="AUTH_TEST_TOKEN"))
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
@@ -58,12 +63,8 @@ def test_status_is_unknown_when_auth_env_is_missing(monkeypatch):
 
     monkeypatch.setattr("app.services.httpx.AsyncClient", FailingAsyncClient)
 
-    cache.clear()
-    client = TestClient(app)
-    response = client.get("/api/status")
-
-    assert response.status_code == 200
-    payload = response.json()
+    _reset_state()
+    payload, *_ = asyncio.run(main_module._refresh_once())
     assert payload["services"][0]["status"] == "unknown"
 
 
@@ -90,12 +91,8 @@ def test_status_sends_bearer_header_when_auth_env_exists(monkeypatch):
 
     monkeypatch.setattr("app.services.httpx.AsyncClient", CaptureAsyncClient)
 
-    cache.clear()
-    client = TestClient(app)
-    response = client.get("/api/status")
-
-    assert response.status_code == 200
-    payload = response.json()
+    _reset_state()
+    payload, *_ = asyncio.run(main_module._refresh_once())
     assert payload["services"][0]["status"] == "healthy"
     assert captured_headers["Authorization"] == "Bearer super-secret-token"
 
@@ -105,6 +102,7 @@ def test_admin_services_returns_auth_ref_metadata_without_secret_values(monkeypa
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-test-token")
     monkeypatch.setenv("AUTH_TEST_TOKEN", "do-not-leak-this")
+    _reset_state()
 
     client = TestClient(app)
     response = client.get(

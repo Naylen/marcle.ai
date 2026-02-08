@@ -12,7 +12,7 @@ from app.models import AuthRef, ServiceStatus, Status, ServiceGroup
 
 logger = logging.getLogger("marcle.services")
 
-TIMEOUT = httpx.Timeout(timeout=config.CHECK_TIMEOUT_SECONDS)
+TIMEOUT = httpx.Timeout(timeout=config.REQUEST_TIMEOUT_SECONDS)
 
 
 async def http_check(
@@ -78,14 +78,14 @@ async def http_check(
             latency_ms=latency, url=url, description=description, icon=icon,
         )
     except httpx.TimeoutException:
-        logger.warning("Timeout checking %s at %s", id, full_url)
+        logger.warning("Timeout checking %s", id)
         return ServiceStatus(
-            id=id, name=name, group=group, status=Status.DOWN,
+            id=id, name=name, group=group, status=Status.UNKNOWN,
             url=url, description=description, icon=icon,
         )
     except Exception as exc:
-        logger.warning("Error checking %s: %s", id, str(exc))
+        logger.warning("Error checking %s (%s)", id, exc.__class__.__name__)
         return ServiceStatus(
-            id=id, name=name, group=group, status=Status.DOWN,
+            id=id, name=name, group=group, status=Status.UNKNOWN,
             url=url, description=description, icon=icon,
         )

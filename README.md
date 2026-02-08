@@ -57,7 +57,8 @@ Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 - `POST /api/admin/services/{service_id}/toggle`
 
 `/api/status` returns normalized status for enabled services from `services.json`.
-Responses are cached in-memory with a 45-second TTL. All checks run concurrently.
+Checks run in a background loop and `/api/status` returns the latest in-memory payload immediately.
+The loop runs every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRENCY` (default `10`) and per-check timeout `REQUEST_TIMEOUT_SECONDS` (default `4`).
 
 ### Runtime Service Config (`services.json`)
 
@@ -96,6 +97,9 @@ See `.env.example`. All are optional; unconfigured or missing-credential service
 Important:
 - `ADMIN_TOKEN` controls admin API access.
 - `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
+- `REFRESH_INTERVAL_SECONDS` controls background refresh cadence (default `30`).
+- `REQUEST_TIMEOUT_SECONDS` controls per-check timeout (default `4`).
+- `MAX_CONCURRENCY` controls in-flight checks per refresh cycle (default `10`).
 - `auth_ref.env` names must exist in backend runtime environment.
 
 ## Deployment

@@ -2,7 +2,10 @@
 
 import os
 
-CHECK_TIMEOUT_SECONDS: float = float(os.getenv("CHECK_TIMEOUT_SECONDS", "10"))
+REQUEST_TIMEOUT_SECONDS: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "4"))
+CHECK_TIMEOUT_SECONDS: float = float(os.getenv("CHECK_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT_SECONDS)))
+REFRESH_INTERVAL_SECONDS: float = float(os.getenv("REFRESH_INTERVAL_SECONDS", "30"))
+MAX_CONCURRENCY: int = int(os.getenv("MAX_CONCURRENCY", "10"))
 SERVICES_CONFIG_PATH: str = os.getenv("SERVICES_CONFIG_PATH", "/data/services.json")
 ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
 

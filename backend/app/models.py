@@ -1,6 +1,6 @@
 """Response models for the status API."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal, Optional
 
@@ -35,7 +35,7 @@ class ServiceStatus(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     icon: Optional[str] = None
-    last_checked: datetime = Field(default_factory=datetime.utcnow)
+    last_checked: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class StatusResponse(BaseModel):
