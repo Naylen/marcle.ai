@@ -4,40 +4,44 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Ask — marcle.ai</title>
+  <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/ask/ask.css">
   <meta name="description" content="Ask Marc a question. Powered by marcle.ai.">
 </head>
 <body>
 
-  <!-- Grain overlay (matches main site) -->
+  <!-- Grain overlay (shared) -->
   <div class="grain"></div>
 
-  <!-- Nav -->
-  <nav class="nav">
-    <a class="nav-brand" href="/ask">
-      <span class="dot"></span>
-      ask.marcle.ai
-    </a>
-    <div class="nav-user" id="nav-user-section" style="display: none;">
-      <span class="nav-points" id="nav-points" title="Marcle Points">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/></svg>
-        <span id="points-display">0</span> pts
-      </span>
-      <img id="user-avatar" src="" alt="" width="32" height="32">
-      <span class="nav-user-name" id="user-name"></span>
-      <button class="btn-logout" id="btn-logout">Logout</button>
+  <!-- Shared header -->
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="/" class="wordmark">marcle<span class="dot">.</span>ai</a>
+      <nav class="header-nav">
+        <a href="/" class="nav-link">status</a>
+        <a href="/ask" class="nav-link nav-link--active">ask</a>
+        <a href="/admin" class="nav-link">admin</a>
+      </nav>
+      <div class="header-user" id="nav-user-section" style="display: none;">
+        <span class="header-points" id="nav-points" title="Marcle Points">
+          <span id="points-display">0</span> pts
+        </span>
+        <img class="header-avatar" id="user-avatar" src="" alt="" width="28" height="28">
+        <span class="header-user-name" id="user-name"></span>
+        <button class="header-logout" id="btn-logout">logout</button>
+      </div>
     </div>
-  </nav>
+  </header>
 
   <!-- Loading State -->
-  <div id="loading-view" class="container" style="text-align: center; padding-top: 100px;">
-    <span class="loading-spinner" style="width: 32px; height: 32px; color: var(--color-accent);"></span>
+  <div id="loading-view" class="ask-container" style="text-align: center; padding-top: 120px;">
+    <span class="loading-spinner" style="width: 32px; height: 32px; color: var(--accent);"></span>
   </div>
 
   <!-- Login View -->
   <div id="login-view" style="display: none;">
-    <div class="container">
-      <div class="hero">
+    <div class="ask-container">
+      <div class="ask-hero">
         <h1>Ask <span class="accent">Marc</span></h1>
         <p>Got a question about the homelab, tech, or anything else? Ask away.</p>
       </div>
@@ -54,8 +58,8 @@
 
   <!-- Authenticated App View -->
   <div id="app-view" style="display: none;">
-    <div class="container">
-      <div class="hero">
+    <div class="ask-container">
+      <div class="ask-hero">
         <h1>Ask <span class="accent">Marc</span></h1>
         <p>Submit your question and get a personal answer delivered to your email.</p>
       </div>
@@ -91,20 +95,21 @@
     </div>
   </div>
 
-  <!-- Footer -->
-  <footer class="footer">
-    <p>
-      <a href="/">marcle.ai status</a> &middot;
-      Powered by curiosity
-    </p>
+  <!-- Footer (shared) -->
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span class="footer-wordmark">marcle.ai</span>
+      <span class="footer-sep">&mdash;</span>
+      <span class="footer-note">built with intent</span>
+    </div>
   </footer>
 
   <script src="/ask/ask.js"></script>
   <script>
     // Enable textarea once JS has loaded and user is ready
     document.addEventListener("DOMContentLoaded", function () {
-      const appView = document.getElementById("app-view");
-      const observer = new MutationObserver(function () {
+      var appView = document.getElementById("app-view");
+      var observer = new MutationObserver(function () {
         if (appView.style.display !== "none") {
           document.getElementById("question-text").disabled = false;
           document.getElementById("nav-user-section").style.display = "flex";
