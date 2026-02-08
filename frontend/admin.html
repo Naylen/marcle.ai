@@ -5,85 +5,204 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>marcle.ai admin</title>
   <link rel="stylesheet" href="styles.css">
-  <style>
-    .admin-wrap { max-width: 64rem; margin: 6rem auto 4rem; padding: 0 1rem; }
-    .admin-panel { background: var(--bg-raised); border: 1px solid var(--border); border-radius: 6px; padding: 1rem; margin-bottom: 1rem; }
-    .admin-grid { display: grid; gap: 0.75rem; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); }
-    .admin-label { font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-dim); display: block; margin-bottom: 0.35rem; }
-    .admin-input, .admin-select, .admin-button {
-      width: 100%; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 4px; padding: 0.5rem 0.6rem;
-      font-family: var(--font-mono); font-size: 0.8rem;
-    }
-    .admin-button { cursor: pointer; }
-    .admin-button:hover { border-color: var(--text-dim); }
-    .admin-help { color: var(--text-faint); font-family: var(--font-mono); font-size: 0.7rem; margin-top: 0.5rem; }
-    .admin-list { display: grid; gap: 0.5rem; }
-    .admin-item { border: 1px solid var(--border); border-radius: 4px; padding: 0.6rem; background: var(--surface); display: grid; gap: 0.5rem; }
-    .admin-actions { display: flex; gap: 0.5rem; }
-    .admin-error { border: 1px solid #a33; color: #f2b8b5; background: rgba(120, 20, 20, 0.2); border-radius: 4px; padding: 0.6rem; font-family: var(--font-mono); font-size: 0.75rem; display:none; }
-    .admin-inline { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-faint); }
-  </style>
 </head>
 <body>
-  <div class="admin-wrap">
-    <div class="admin-panel">
-      <label class="admin-label" for="admin-token">Admin token</label>
-      <input id="admin-token" class="admin-input" type="password" autocomplete="off" placeholder="Bearer token">
-      <div class="admin-help">Used only for admin API calls from this page.</div>
-      <div class="admin-actions" style="margin-top:0.75rem;">
-        <button id="connect-btn" class="admin-button" type="button">Load services</button>
+  <main class="admin-wrap">
+    <header class="admin-page-header">
+      <h1 class="admin-page-title">Admin · Service Configuration</h1>
+      <p class="admin-page-subtitle">Live configuration · changes apply immediately</p>
+    </header>
+
+    <section class="admin-health-widget" aria-label="Live health preview">
+      <div class="admin-health-item">
+        <span class="admin-health-label">Overall</span>
+        <span id="admin-health-overall" class="admin-status-badge unknown">Unknown</span>
       </div>
-      <div id="admin-error" class="admin-error" style="margin-top:0.75rem;"></div>
-    </div>
+      <div class="admin-health-item">
+        <span class="admin-health-label">Counts</span>
+        <div class="admin-health-counts">
+          <span id="admin-health-count-healthy" class="admin-chip admin-chip-success">H 0</span>
+          <span id="admin-health-count-degraded" class="admin-chip admin-health-chip-degraded">Dg 0</span>
+          <span id="admin-health-count-down" class="admin-chip admin-health-chip-down">Dn 0</span>
+          <span id="admin-health-count-unknown" class="admin-chip admin-chip-muted">U 0</span>
+        </div>
+      </div>
+      <div class="admin-health-item">
+        <span class="admin-health-label">Cache age</span>
+        <span id="admin-health-cache-age" class="admin-inline">—</span>
+      </div>
+      <div class="admin-health-item">
+        <span class="admin-health-label">Updated</span>
+        <span id="admin-health-updated-at" class="admin-inline">—</span>
+      </div>
+      <p id="admin-health-note" class="admin-health-note">Fetching public health preview…</p>
+    </section>
 
-    <div class="admin-panel">
-      <h2 style="font-family:var(--font-mono);font-size:0.9rem;margin-bottom:0.75rem;">Add service</h2>
-      <form id="create-form">
-        <div class="admin-grid">
-          <div><label class="admin-label">ID</label><input name="id" class="admin-input" required></div>
-          <div><label class="admin-label">Name</label><input name="name" class="admin-input" required></div>
-          <div><label class="admin-label">Group</label>
-            <select name="group" class="admin-select">
-              <option value="core">core</option>
-              <option value="media">media</option>
-              <option value="automation">automation</option>
-            </select>
+    <div id="admin-error" class="admin-alert is-hidden" role="alert" aria-live="polite"></div>
+
+    <section class="admin-panel" aria-labelledby="admin-auth-heading">
+      <div class="admin-panel-heading">
+        <h2 id="admin-auth-heading" class="admin-section-title">Authentication</h2>
+        <span id="auth-status-indicator" class="admin-chip admin-chip-muted">Not authenticated</span>
+      </div>
+
+      <label class="admin-label" for="admin-token">Admin Token (required)</label>
+      <input id="admin-token" class="admin-input" type="password" autocomplete="off" placeholder="Bearer token">
+      <p class="admin-help">This token is never stored. It is required for each admin action.</p>
+
+      <div class="admin-actions-row">
+        <button id="load-services-btn" class="admin-button" type="button" disabled>Load services</button>
+      </div>
+    </section>
+
+    <section class="admin-panel" aria-labelledby="admin-services-heading">
+      <div class="admin-panel-heading">
+        <h2 id="admin-services-heading" class="admin-section-title">Service List</h2>
+        <p id="service-list-meta" class="admin-inline">No services loaded.</p>
+      </div>
+
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th scope="col">Name</th>
+              <th scope="col">Group</th>
+              <th scope="col">Health</th>
+              <th scope="col">Enabled</th>
+              <th scope="col">Auth</th>
+              <th scope="col">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="service-list-body">
+            <tr>
+              <td class="admin-empty" colspan="6">Load services to begin.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" aria-labelledby="service-form-heading">
+      <div class="admin-panel-heading">
+        <h2 id="service-form-heading" class="admin-section-title">Add Service</h2>
+        <button id="cancel-edit-btn" class="admin-button admin-button-quiet is-hidden" type="button">Cancel edit</button>
+      </div>
+
+      <p id="service-form-mode-note" class="admin-help">Create a new service entry.</p>
+      <p id="service-save-message" class="admin-success is-hidden" role="status" aria-live="polite">Service saved.</p>
+
+      <form id="service-form" novalidate>
+        <fieldset class="admin-fieldset">
+          <legend class="admin-legend">Identity</legend>
+          <div class="admin-grid">
+            <div class="admin-field">
+              <label class="admin-label" for="service-id">ID</label>
+              <input id="service-id" name="id" class="admin-input" required aria-describedby="service-id-note service-id-error">
+              <p id="service-id-note" class="admin-inline is-hidden">ID cannot be changed while editing.</p>
+              <p id="service-id-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div class="admin-field">
+              <label class="admin-label" for="service-name">Name</label>
+              <input id="service-name" name="name" class="admin-input" required aria-describedby="service-name-error">
+              <p id="service-name-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div class="admin-field">
+              <label class="admin-label" for="service-group">Group</label>
+              <select id="service-group" name="group" class="admin-select" required aria-describedby="service-group-error">
+                <option value="core">core</option>
+                <option value="media">media</option>
+                <option value="automation">automation</option>
+              </select>
+              <p id="service-group-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
           </div>
-          <div><label class="admin-label">Check type</label><input name="check_type" class="admin-input" required></div>
-          <div><label class="admin-label">URL</label><input name="url" class="admin-input" required></div>
-          <div><label class="admin-label">Icon</label><input name="icon" class="admin-input"></div>
-          <div><label class="admin-label">Description</label><input name="description" class="admin-input"></div>
+        </fieldset>
+
+        <fieldset class="admin-fieldset">
+          <legend class="admin-legend">Display</legend>
+          <div class="admin-grid">
+            <div class="admin-field">
+              <label class="admin-label" for="service-icon">Icon</label>
+              <input id="service-icon" name="icon" class="admin-input">
+              <p id="service-icon-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div class="admin-field">
+              <label class="admin-label" for="service-description">Description</label>
+              <input id="service-description" name="description" class="admin-input">
+              <p id="service-description-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="admin-fieldset">
+          <legend class="admin-legend">Check</legend>
+          <div class="admin-grid">
+            <div class="admin-field">
+              <label class="admin-label" for="service-url">URL</label>
+              <input id="service-url" name="url" class="admin-input" required aria-describedby="service-url-error">
+              <p id="service-url-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div class="admin-field">
+              <label class="admin-label" for="service-check-type">Check type</label>
+              <input id="service-check-type" name="check_type" class="admin-input" required aria-describedby="service-check-type-error">
+              <p id="service-check-type-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset class="admin-fieldset">
+          <legend class="admin-legend">Auth</legend>
+          <div class="admin-grid">
+            <div class="admin-field">
+              <label class="admin-label" for="service-auth-scheme">Auth scheme</label>
+              <select id="service-auth-scheme" name="auth_scheme" class="admin-select" aria-describedby="service-auth-scheme-error">
+                <option value="none">none</option>
+                <option value="bearer">bearer</option>
+                <option value="basic">basic</option>
+                <option value="header">header</option>
+              </select>
+              <p id="service-auth-scheme-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div id="service-auth-env-wrap" class="admin-field is-hidden">
+              <label class="admin-label" for="service-auth-env">Auth env var name</label>
+              <input id="service-auth-env" name="auth_env" class="admin-input" placeholder="PROXMOX_API_TOKEN" aria-describedby="service-auth-env-error">
+              <p id="service-auth-env-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+
+            <div id="service-auth-header-wrap" class="admin-field is-hidden">
+              <label class="admin-label" for="service-auth-header-name">Header name</label>
+              <input id="service-auth-header-name" name="auth_header_name" class="admin-input" placeholder="X-Api-Key" aria-describedby="service-auth-header-name-error">
+              <p id="service-auth-header-name-error" class="admin-field-error" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <p class="admin-help">Set secret values in backend <code>.env</code> under the env var names above.</p>
+        </fieldset>
+
+        <div class="admin-actions-row">
+          <button id="save-service-btn" class="admin-button" type="submit" disabled>Add service</button>
+          <button id="reset-service-form-btn" class="admin-button admin-button-quiet" type="button" disabled>Reset form</button>
         </div>
-        <div class="admin-grid" style="margin-top:0.75rem;">
-          <div>
-            <label class="admin-label">Auth scheme</label>
-            <select id="create-auth-scheme" name="auth_scheme" class="admin-select">
-              <option value="none">none</option>
-              <option value="bearer">bearer</option>
-              <option value="basic">basic</option>
-              <option value="header">header</option>
-            </select>
-          </div>
-          <div>
-            <label class="admin-label">Auth env var name</label>
-            <input id="create-auth-env" name="auth_env" class="admin-input" placeholder="PROXMOX_API_TOKEN">
-          </div>
-          <div id="create-auth-header-wrap" style="display:none;">
-            <label class="admin-label">Header name</label>
-            <input id="create-auth-header-name" name="auth_header_name" class="admin-input" placeholder="X-Api-Key">
-          </div>
-        </div>
-        <div class="admin-help">Set the secret value in backend <code>.env</code> under the given env var name.</div>
-        <button class="admin-button" type="submit" style="margin-top:0.75rem;">Create service</button>
       </form>
-    </div>
+    </section>
+  </main>
 
-    <div class="admin-panel">
-      <h2 style="font-family:var(--font-mono);font-size:0.9rem;margin-bottom:0.75rem;">Configured services</h2>
-      <div class="admin-help" style="margin-bottom:0.75rem;">Edit metadata and auth_ref (scheme/env/header_name) inline, then save.</div>
-      <div id="service-list" class="admin-list"></div>
+  <div id="delete-modal-backdrop" class="admin-modal-backdrop is-hidden" hidden>
+    <div id="delete-modal" class="admin-modal" role="dialog" aria-modal="true" aria-labelledby="delete-modal-title" aria-describedby="delete-modal-message">
+      <h3 id="delete-modal-title" class="admin-modal-title">Delete service</h3>
+      <p id="delete-modal-message" class="admin-modal-message"></p>
+      <div class="admin-actions-row admin-modal-actions">
+        <button id="delete-cancel-btn" class="admin-button admin-button-quiet" type="button">Cancel</button>
+        <button id="delete-confirm-btn" class="admin-button admin-button-danger" type="button">Delete service</button>
+      </div>
     </div>
   </div>
+
   <script src="admin.js"></script>
 </body>
 </html>

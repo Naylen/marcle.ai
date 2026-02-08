@@ -1,0 +1,76 @@
+{
+  "services": {
+    "proxmox": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "plex": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "arrs": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "unifi_network": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "unifi_protect": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "overseerr": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "tautulli": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "home_assistant": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "ollama": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    },
+    "n8n": {
+      "last_status": "unknown",
+      "last_changed_at": "2026-02-08T03:01:52.640956+00:00",
+      "last_seen_at": "2026-02-08T04:20:12.576407+00:00",
+      "change_timestamps": [],
+      "flapping": false
+    }
+  },
+  "last_incident": null,
+  "incident_history": []
+}

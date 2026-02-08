@@ -69,6 +69,31 @@ def test_admin_requires_auth_header(monkeypatch):
     assert response.status_code == 401
 
 
+def test_admin_invalid_token_uses_timing_safe_compare(monkeypatch):
+    monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("svc-a")]))
+    monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")
+    _reset_state()
+
+    captured = {}
+
+    def fake_compare_digest(left, right):
+        captured["left"] = left
+        captured["right"] = right
+        return False
+
+    monkeypatch.setattr(main_module.hmac, "compare_digest", fake_compare_digest)
+
+    client = TestClient(app)
+    response = client.get(
+        "/api/admin/services",
+        headers={"Authorization": "Bearer wrong-token"},
+    )
+
+    assert response.status_code == 401
+    assert captured["left"] == "wrong-token"
+    assert captured["right"] == "admin-token"
+
+
 def test_admin_delete_and_toggle(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("svc-a"), _service("svc-b")]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")

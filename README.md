@@ -22,8 +22,9 @@ docker compose up --build
 ```
 
 Frontend: `http://localhost:8080`
-API: `http://localhost:8000/api/status`
+API (via nginx proxy): `http://localhost:8080/api/status`
 Admin UI: `http://localhost:8080/admin`
+Backend container port `8000` is internal-only by default in `docker-compose.yml`.
 
 ## Frontend
 

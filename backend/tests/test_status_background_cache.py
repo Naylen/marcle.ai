@@ -99,6 +99,54 @@ def test_status_serves_cached_payload_without_rebuilding(monkeypatch):
     assert payload["generated_at"].startswith("2026-02-07T00:00:00")
 
 
+def test_status_hides_service_urls_when_not_exposed(monkeypatch):
+    monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service()]))
+    monkeypatch.setattr(main_module.config, "EXPOSE_SERVICE_URLS", False)
+    _reset_state()
+
+    cached_payload = {
+        "generated_at": "2026-02-07T00:00:00+00:00",
+        "overall_status": "healthy",
+        "services": [
+            {
+                "id": "svc-a",
+                "name": "Service svc-a",
+                "group": "core",
+                "status": "healthy",
+                "latency_ms": 12,
+                "url": "https://internal.example.test",
+                "description": "test",
+                "icon": "svc-a.svg",
+                "last_checked": "2026-02-07T00:00:00+00:00",
+            }
+        ],
+    }
+    asyncio.run(state.set_cached_payload(cached_payload))
+
+    client = TestClient(app)
+    hidden_response = client.get("/api/status")
+    assert hidden_response.status_code == 200
+    hidden_service = hidden_response.json()["services"][0]
+    assert hidden_service["url"] is None
+
+    monkeypatch.setattr(main_module.config, "EXPOSE_SERVICE_URLS", True)
+    visible_response = client.get("/api/status")
+    assert visible_response.status_code == 200
+    visible_service = visible_response.json()["services"][0]
+    assert visible_service["url"] == "https://internal.example.test"
+
+
+def test_status_no_wildcard_cors_header_by_default(monkeypatch):
+    monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service()]))
+    _reset_state()
+
+    client = TestClient(app)
+    response = client.get("/api/status", headers={"Origin": "https://example.com"})
+
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") != "*"
+
+
 def test_admin_create_marks_refresh(monkeypatch):
     monkeypatch.setattr(main_module, "config_store", FakeConfigStore([_service("existing")]))
     monkeypatch.setattr(main_module.config, "ADMIN_TOKEN", "admin-token")

@@ -1,6 +1,7 @@
 """marcle.ai status API — main application."""
 
 import asyncio
+import hmac
 import logging
 import os
 import time
@@ -291,17 +292,33 @@ app = FastAPI(
     lifespan=_lifespan,
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["*"],
-)
+if config.CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=config.CORS_ORIGINS,
+        allow_methods=["GET", "POST", "PUT", "DELETE"],
+        allow_headers=["Authorization", "Content-Type"],
+    )
+
+
+def _apply_url_visibility(payload: dict[str, Any]) -> dict[str, Any]:
+    if config.EXPOSE_SERVICE_URLS:
+        return payload
+
+    services = payload.get("services")
+    if not isinstance(services, list):
+        return payload
+
+    for service in services:
+        if isinstance(service, dict):
+            service["url"] = None
+    return payload
 
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status():
-    return await _get_cached_payload_or_initialize()
+    payload = await _get_cached_payload_or_initialize()
+    return _apply_url_visibility(payload)
 
 
 @app.get("/api/incidents")
@@ -425,8 +442,8 @@ def _require_admin(authorization: str = Header(default="")) -> None:
         )
 
     prefix = "Bearer "
-    token = authorization[len(prefix):] if authorization.startswith(prefix) else None
-    if token != config.ADMIN_TOKEN:
+    token = authorization[len(prefix):] if authorization.startswith(prefix) else ""
+    if not hmac.compare_digest(token, config.ADMIN_TOKEN):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid admin token",
