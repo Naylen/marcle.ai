@@ -46,6 +46,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger("marcle.api")
 
+
+def _log_startup_env_warnings() -> None:
+    if not os.getenv("ADMIN_TOKEN"):
+        logger.warning("ADMIN_TOKEN is not set; admin endpoints are disabled.")
+    if not os.getenv("TAUTULLI_API_KEY"):
+        logger.warning("TAUTULLI_API_KEY is not set; Tautulli checks may report unknown.")
+
+
 CHECK_TYPE_PROFILES: dict[str, dict] = {
     "proxmox": {"path": "/api2/json/version", "healthy_status_codes": {200}},
     "unifi-network": {"path": "/", "healthy_status_codes": {200, 302}},
@@ -283,6 +291,7 @@ async def _invalidate_and_refresh() -> None:
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI):
+    _log_startup_env_warnings()
     await _set_startup_payload()
     refresh_task = asyncio.create_task(_refresh_loop(), name="status-refresh-loop")
     try:

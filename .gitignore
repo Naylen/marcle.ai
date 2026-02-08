@@ -35,3 +35,8 @@ Thumbs.db
 
 # Mounted volumes
 mnt/
+
+# Runtime state (do not commit)
+data/observations.json
+backend/observations.json
+observations.json
