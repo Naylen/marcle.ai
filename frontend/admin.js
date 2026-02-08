@@ -1141,6 +1141,21 @@
     return !deleteModalBackdrop.classList.contains("is-hidden");
   }
 
+  function setDeleteModalVisibility(isVisible) {
+    if (!deleteModalBackdrop) return;
+    if (isVisible) {
+      deleteModalBackdrop.hidden = false;
+      deleteModalBackdrop.classList.remove("is-hidden");
+      deleteModalBackdrop.style.display = "flex";
+      document.body.classList.add("admin-modal-open");
+      return;
+    }
+    deleteModalBackdrop.classList.add("is-hidden");
+    deleteModalBackdrop.hidden = true;
+    deleteModalBackdrop.style.display = "none";
+    document.body.classList.remove("admin-modal-open");
+  }
+
   function openDeleteModal(serviceId) {
     var service = servicesById[serviceId];
     if (!service) {
@@ -1153,18 +1168,14 @@
     deleteModalMessage.textContent = "Delete service '" + displayName + "'? This removes it immediately.";
 
     modalLastFocused = document.activeElement;
-    deleteModalBackdrop.hidden = false;
-    deleteModalBackdrop.classList.remove("is-hidden");
-    document.body.classList.add("admin-modal-open");
+    setDeleteModalVisibility(true);
     deleteCancelBtn.focus();
     updateActionAvailability();
   }
 
   function closeDeleteModal() {
     pendingDeleteServiceId = null;
-    deleteModalBackdrop.classList.add("is-hidden");
-    deleteModalBackdrop.hidden = true;
-    document.body.classList.remove("admin-modal-open");
+    setDeleteModalVisibility(false);
 
     if (
       modalLastFocused &&
@@ -1738,6 +1749,7 @@
   });
 
   setAuthIndicator(false);
+  setDeleteModalVisibility(false);
   applyAddMode(true);
   applyNotificationAddMode();
   renderBulkSelectionMeta();
