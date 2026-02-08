@@ -2,11 +2,24 @@
 
 import os
 
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 REQUEST_TIMEOUT_SECONDS: float = float(os.getenv("REQUEST_TIMEOUT_SECONDS", "4"))
 CHECK_TIMEOUT_SECONDS: float = float(os.getenv("CHECK_TIMEOUT_SECONDS", str(REQUEST_TIMEOUT_SECONDS)))
 REFRESH_INTERVAL_SECONDS: float = float(os.getenv("REFRESH_INTERVAL_SECONDS", "30"))
 MAX_CONCURRENCY: int = int(os.getenv("MAX_CONCURRENCY", "10"))
 SERVICES_CONFIG_PATH: str = os.getenv("SERVICES_CONFIG_PATH", "/data/services.json")
+OBSERVATIONS_PATH: str = os.getenv("OBSERVATIONS_PATH", "/data/observations.json")
+OBSERVATIONS_HISTORY_LIMIT: int = int(os.getenv("OBSERVATIONS_HISTORY_LIMIT", "200"))
+EXPOSE_SERVICE_URLS: bool = _env_bool("EXPOSE_SERVICE_URLS", False)
+FLAP_WINDOW_SECONDS: int = int(os.getenv("FLAP_WINDOW_SECONDS", "600"))
+FLAP_THRESHOLD: int = int(os.getenv("FLAP_THRESHOLD", "3"))
 ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
 
 # Proxmox

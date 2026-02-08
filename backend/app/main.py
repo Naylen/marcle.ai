@@ -6,8 +6,9 @@ import os
 import time
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
+from typing import Any, Mapping
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -23,6 +24,7 @@ from app.models import (
     Status,
     StatusResponse,
 )
+from app.observations_store import observations_store
 from app.services import http_check
 from app.state import state
 
@@ -53,6 +55,8 @@ CHECK_TYPE_PROFILES: dict[str, dict] = {
     "n8n": {"path": "/healthz", "healthy_status_codes": {200, 204}},
     "generic": {"path": "/", "healthy_status_codes": {200}},
 }
+MAX_INCIDENTS_LIMIT = 200
+DEFAULT_SERVICE_INCIDENTS_LIMIT = 20
 
 
 def _compute_overall(services) -> OverallStatus:
@@ -155,6 +159,34 @@ def _status_counts(services: list[ServiceStatus]) -> dict[Status, int]:
     return counts
 
 
+def _services_from_payload(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
+    services = payload.get("services", [])
+    if not isinstance(services, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    for service in services:
+        if isinstance(service, Mapping):
+            normalized.append(dict(service))
+    return normalized
+
+
+def _find_service_in_payload(services: list[dict[str, Any]], service_id: str) -> dict[str, Any] | None:
+    for service in services:
+        if service.get("id") == service_id:
+            return service
+    return None
+
+
+async def _initialize_observations(payload: Mapping[str, Any], observed_at: datetime) -> None:
+    services = _services_from_payload(payload)
+    await asyncio.to_thread(observations_store.initialize_services, services, observed_at)
+
+
+async def _apply_observations(payload: Mapping[str, Any], observed_at: datetime) -> dict[str, Any]:
+    services = _services_from_payload(payload)
+    return await asyncio.to_thread(observations_store.apply_refresh, services, observed_at)
+
+
 async def _refresh_once() -> tuple[dict, datetime, int, dict[Status, int]]:
     """Run all checks concurrently and return json-encoded payload plus metrics."""
     refresh_started_at = datetime.now(timezone.utc)
@@ -187,7 +219,18 @@ async def _set_startup_payload() -> dict:
         refreshed_at=payload.generated_at,
         refresh_duration_ms=0,
     )
+    try:
+        await _initialize_observations(encoded, payload.generated_at)
+    except Exception:
+        logger.exception("Failed initializing observations")
     return encoded
+
+
+async def _get_cached_payload_or_initialize() -> dict:
+    cached_payload = await state.get_cached_payload()
+    if cached_payload is None:
+        return await _set_startup_payload()
+    return cached_payload
 
 
 async def _refresh_loop() -> None:
@@ -199,6 +242,10 @@ async def _refresh_loop() -> None:
                 refreshed_at=refreshed_at,
                 refresh_duration_ms=duration_ms,
             )
+            try:
+                await _apply_observations(payload, refreshed_at)
+            except Exception:
+                logger.exception("Failed persisting observations")
             logger.info(
                 "Refresh cycle duration_ms=%d healthy=%d degraded=%d down=%d unknown=%d",
                 duration_ms,
@@ -254,10 +301,120 @@ app.add_middleware(
 
 @app.get("/api/status", response_model=StatusResponse)
 async def get_status():
-    cached = await state.get_cached_payload()
-    if cached is not None:
-        return cached
-    return await _set_startup_payload()
+    return await _get_cached_payload_or_initialize()
+
+
+@app.get("/api/incidents")
+async def get_incidents(limit: int = Query(default=50, ge=1)):
+    bounded_limit = min(limit, MAX_INCIDENTS_LIMIT)
+    return await asyncio.to_thread(observations_store.get_global_incidents, bounded_limit)
+
+
+@app.get("/api/services/{service_id}")
+async def get_service_details(service_id: str):
+    cached_payload = await _get_cached_payload_or_initialize()
+    services_payload = _services_from_payload(cached_payload)
+    service = _find_service_in_payload(services_payload, service_id)
+    if service is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Service not found")
+
+    service_observation = await asyncio.to_thread(observations_store.get_service_observation, service_id) or {}
+    service_response = {
+        "id": service.get("id"),
+        "name": service.get("name"),
+        "group": service.get("group"),
+        "status": service.get("status"),
+        "latency_ms": service.get("latency_ms"),
+        "icon": service.get("icon"),
+        "description": service.get("description"),
+        "last_checked": service.get("last_checked"),
+        "last_changed_at": service_observation.get("last_changed_at"),
+        "flapping": bool(service_observation.get("flapping", False)),
+    }
+    if config.EXPOSE_SERVICE_URLS:
+        service_response["url"] = service.get("url")
+
+    recent_incidents = await asyncio.to_thread(
+        observations_store.get_recent_incidents,
+        service_id,
+        DEFAULT_SERVICE_INCIDENTS_LIMIT,
+    )
+    return {
+        "service": service_response,
+        "recent_incidents": recent_incidents,
+    }
+
+
+@app.get("/api/overview")
+async def get_overview():
+    now = datetime.now(timezone.utc)
+    cached_payload = await _get_cached_payload_or_initialize()
+
+    refresh_meta = await state.get_refresh_metadata()
+    last_refresh_at = refresh_meta.get("last_refresh_at")
+    cache_age_seconds: int | None = None
+    if isinstance(last_refresh_at, datetime):
+        cache_age_seconds = max(0, int((now - last_refresh_at).total_seconds()))
+
+    services_payload = _services_from_payload(cached_payload)
+    counts = {
+        "healthy": 0,
+        "degraded": 0,
+        "down": 0,
+        "unknown": 0,
+        "total": len(services_payload),
+    }
+    for service in services_payload:
+        status_value = service.get("status")
+        if status_value in counts:
+            counts[status_value] += 1
+
+    observations = await asyncio.to_thread(observations_store.get_snapshot)
+    observed_services = observations.get("services", {})
+    overview_services: list[dict[str, Any]] = []
+    for service in services_payload:
+        service_id = service.get("id")
+        if not isinstance(service_id, str):
+            continue
+        observed = observed_services.get(service_id, {})
+        if not isinstance(observed, Mapping):
+            observed = {}
+        overview_services.append(
+            {
+                "id": service_id,
+                "last_changed_at": observed.get("last_changed_at"),
+                "last_status": observed.get("last_status"),
+            }
+        )
+
+    last_incident_raw = observations.get("last_incident")
+    last_incident = None
+    if isinstance(last_incident_raw, Mapping):
+        service_id = last_incident_raw.get("service_id")
+        from_status = last_incident_raw.get("from_status")
+        to_status = last_incident_raw.get("to_status")
+        at_value = last_incident_raw.get("at")
+        if (
+            isinstance(service_id, str)
+            and isinstance(from_status, str)
+            and isinstance(to_status, str)
+            and isinstance(at_value, str)
+        ):
+            last_incident = {
+                "service_id": service_id,
+                "from": from_status,
+                "to": to_status,
+                "at": at_value,
+            }
+
+    return {
+        "generated_at": now,
+        "last_refresh_at": last_refresh_at,
+        "cache_age_seconds": cache_age_seconds,
+        "counts": counts,
+        "last_incident": last_incident,
+        "services": overview_services,
+    }
 
 
 def _require_admin(authorization: str = Header(default="")) -> None:

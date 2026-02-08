@@ -60,6 +60,13 @@ class StatusState:
             self._last_refresh_duration_ms = None
         self._needs_refresh.clear()
 
+    async def get_refresh_metadata(self) -> dict[str, Any]:
+        async with self._lock:
+            return {
+                "last_refresh_at": self._last_refresh_at,
+                "last_refresh_duration_ms": self._last_refresh_duration_ms,
+            }
+
     async def mark_needs_refresh(self) -> None:
         self._needs_refresh.set()
 

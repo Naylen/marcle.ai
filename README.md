@@ -48,6 +48,9 @@ uvicorn app.main:app --reload
 
 Public endpoint:
 - `GET /api/status`
+- `GET /api/overview`
+- `GET /api/incidents?limit=50`
+- `GET /api/services/{id}`
 
 Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 - `GET /api/admin/services`
@@ -59,10 +62,19 @@ Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 `/api/status` returns normalized status for enabled services from `services.json`.
 Checks run in a background loop and `/api/status` returns the latest in-memory payload immediately.
 The loop runs every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRENCY` (default `10`) and per-check timeout `REQUEST_TIMEOUT_SECONDS` (default `4`).
+`/api/overview` returns derived dashboard metadata (counts, cache age, last incident, and per-service last-changed info).
+`/api/incidents` returns recent incident transitions (most recent first).
+`/api/services/{id}` returns service detail + recent incidents for drawer views.
 
 ### Runtime Service Config (`services.json`)
 
 `services.json` stores only non-secret service metadata.
+
+Operational dashboard metadata is persisted separately in `observations.json`
+(default `/data/observations.json`) and contains only status transitions:
+`services.<id>.last_status`, `last_changed_at`, `last_seen_at`, and
+global `last_incident` plus capped `incident_history`.
+Each service observation also tracks `change_timestamps` and `flapping`.
 
 Auth is configured with `auth_ref`, which points to environment variable names:
 
@@ -97,6 +109,11 @@ See `.env.example`. All are optional; unconfigured or missing-credential service
 Important:
 - `ADMIN_TOKEN` controls admin API access.
 - `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
+- `OBSERVATIONS_PATH` points to persisted operational metadata (default `/data/observations.json`).
+- `OBSERVATIONS_HISTORY_LIMIT` caps stored incident history entries (default `200`).
+- `EXPOSE_SERVICE_URLS` controls whether `/api/services/{id}` includes `url` (default `false`).
+- `FLAP_WINDOW_SECONDS` defines the flapping lookback window (default `600`).
+- `FLAP_THRESHOLD` defines minimum transitions in window for flapping (default `3`).
 - `REFRESH_INTERVAL_SECONDS` controls background refresh cadence (default `30`).
 - `REQUEST_TIMEOUT_SECONDS` controls per-check timeout (default `4`).
 - `MAX_CONCURRENCY` controls in-flight checks per refresh cycle (default `10`).

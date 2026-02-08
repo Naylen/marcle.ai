@@ -85,12 +85,32 @@
     <section id="status" class="status-section">
       <div class="section-inner">
         <div class="section-label">service status</div>
+        <div id="overview-shell" class="overview-shell is-hidden">
+          <div class="overview-grid">
+            <article class="overview-card">
+              <h3 class="overview-title">System Overview</h3>
+              <p id="overview-total" class="overview-total">— services</p>
+              <div class="overview-counts">
+                <span id="count-healthy" class="overview-count healthy">healthy 0</span>
+                <span id="count-degraded" class="overview-count degraded">degraded 0</span>
+                <span id="count-down" class="overview-count down">down 0</span>
+                <span id="count-unknown" class="overview-count unknown">unknown 0</span>
+              </div>
+            </article>
+            <article class="overview-card">
+              <h3 class="overview-title">Cache Freshness</h3>
+              <p id="overview-last-updated" class="overview-meta">Last updated —</p>
+              <p id="overview-cache-age" class="overview-meta">Cache age —</p>
+            </article>
+          </div>
+          <div id="incident-banner" class="incident-banner is-hidden"></div>
+        </div>
         <div id="status-grid" class="status-grid">
           <div class="status-placeholder">Loading status data&hellip;</div>
         </div>
         <p class="status-note">
           Status checks run every 30–60 seconds. Data sourced from
-          <code>/api/status</code>.
+          <code>/api/status</code> and <code>/api/overview</code>.
         </p>
       </div>
     </section>
@@ -124,6 +144,85 @@
       <span class="footer-note">built with intent</span>
     </div>
   </footer>
+
+  <div
+    id="service-drawer-backdrop"
+    class="service-drawer-backdrop is-hidden"
+    hidden
+    aria-hidden="true"
+  >
+    <aside
+      id="service-drawer"
+      class="service-drawer"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="drawer-title"
+    >
+      <header class="service-drawer-header">
+        <div class="service-drawer-heading">
+          <h2 id="drawer-title" class="service-drawer-title">Service Details</h2>
+          <span id="drawer-status-pill" class="drawer-status-pill unknown">unknown</span>
+        </div>
+        <button
+          id="drawer-close"
+          class="drawer-close"
+          type="button"
+          aria-label="Close service details"
+        >
+          close
+        </button>
+      </header>
+
+      <div id="drawer-loading" class="service-drawer-loading">Loading details…</div>
+      <div id="drawer-error" class="service-drawer-error is-hidden" role="status"></div>
+
+      <div id="drawer-body" class="service-drawer-body is-hidden">
+        <div class="service-drawer-grid">
+          <div class="drawer-field">
+            <span class="drawer-label">Status</span>
+            <span id="drawer-field-status" class="drawer-value">—</span>
+          </div>
+          <div class="drawer-field">
+            <span class="drawer-label">Latency</span>
+            <span id="drawer-field-latency" class="drawer-value">—</span>
+          </div>
+          <div class="drawer-field">
+            <span class="drawer-label">Last checked</span>
+            <span id="drawer-field-last-checked" class="drawer-value">—</span>
+          </div>
+          <div class="drawer-field">
+            <span class="drawer-label">Last changed</span>
+            <span id="drawer-field-last-changed" class="drawer-value">—</span>
+          </div>
+        </div>
+
+        <div id="drawer-flapping-wrap" class="drawer-flapping-wrap is-hidden">
+          <span class="drawer-flapping-badge">Flapping detected</span>
+        </div>
+
+        <div id="drawer-description-wrap" class="drawer-description-wrap is-hidden">
+          <span class="drawer-label">Description</span>
+          <p id="drawer-description" class="drawer-description"></p>
+        </div>
+
+        <a
+          id="drawer-open-link"
+          class="drawer-open-link is-hidden"
+          href="#"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          Open
+        </a>
+
+        <section class="drawer-incidents-section">
+          <h3 class="drawer-subtitle">Recent incidents</h3>
+          <ul id="drawer-incidents" class="drawer-incidents"></ul>
+          <p id="drawer-incidents-empty" class="drawer-incidents-empty is-hidden">No recent incidents.</p>
+        </section>
+      </div>
+    </aside>
+  </div>
 
   <script src="status.js"></script>
 </body>
