@@ -28,13 +28,13 @@ class FakeConfigStore:
         self._services.append(service)
 
 
-def _service_with_auth(auth_ref: AuthRef | None) -> ServiceConfig:
+def _service_with_auth(auth_ref: AuthRef | None, check_type: str = "generic") -> ServiceConfig:
     return ServiceConfig(
         id="auth-test",
         name="Auth Test",
         group=ServiceGroup.CORE,
         url="https://example.test",
-        check_type="generic",
+        check_type=check_type,
         enabled=True,
         auth_ref=auth_ref,
     )
@@ -124,6 +124,39 @@ def test_status_sends_query_param_when_auth_env_exists(monkeypatch):
     _reset_state()
     payload, *_ = asyncio.run(main_module._refresh_once())
     assert payload["services"][0]["status"] == "healthy"
+    assert captured_params["apikey"] == "query-secret-token"
+
+
+def test_status_merges_profile_params_with_auth_query_param(monkeypatch):
+    service = _service_with_auth(
+        AuthRef(scheme="query_param", env="AUTH_TEST_TOKEN", param_name="apikey"),
+        check_type="tautulli",
+    )
+    monkeypatch.setattr(main_module, "config_store", FakeConfigStore([service]))
+    monkeypatch.setenv("AUTH_TEST_TOKEN", "query-secret-token")
+
+    captured_params = {}
+
+    class CaptureAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, *args, **kwargs):
+            captured_params.update(kwargs.get("params") or {})
+            return SimpleNamespace(status_code=200)
+
+    monkeypatch.setattr("app.services.httpx.AsyncClient", CaptureAsyncClient)
+
+    _reset_state()
+    payload, *_ = asyncio.run(main_module._refresh_once())
+    assert payload["services"][0]["status"] == "healthy"
+    assert captured_params["cmd"] == "status"
     assert captured_params["apikey"] == "query-secret-token"
 
 

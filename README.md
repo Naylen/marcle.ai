@@ -21,9 +21,9 @@ cp .env.example .env
 docker compose up --build
 ```
 
-Frontend: `http://localhost:8080`
-API (via nginx proxy): `http://localhost:8080/api/status`
-Admin UI: `http://localhost:8080/admin`
+Frontend: `http://localhost:9181`
+API (via nginx proxy): `http://localhost:9181/api/status`
+Admin UI: `http://localhost:9181/admin`
 Backend container port `8000` is internal-only by default in `docker-compose.yml`.
 
 ## Frontend
@@ -66,6 +66,9 @@ Public endpoints:
 Admin endpoints (require `Authorization: Bearer <ADMIN_TOKEN>`):
 - `GET /api/admin/services`
 - `GET /api/admin/audit?limit=200`
+- `GET /api/admin/notifications`
+- `PUT /api/admin/notifications`
+- `POST /api/admin/notifications/test`
 - `POST /api/admin/services`
 - `PUT /api/admin/services/{service_id}`
 - `DELETE /api/admin/services/{service_id}`
@@ -112,6 +115,10 @@ Supported auth schemes:
 - `basic` → `Authorization: Basic base64(user:pass)` where env value is `USER:PASS`
 - `header` → custom `<header_name>: <ENV_VALUE>`
 - `query_param` → appends `<param_name>=<ENV_VALUE>` to the request URL query string
+
+Tautulli default:
+- check path/profile uses `GET /api/v2` with `cmd=status` as query params
+- set `auth_ref` to `{"scheme":"query_param","env":"TAUTULLI_API_KEY","param_name":"apikey"}`
 
 Never put token/password values into `services.json`.
 Set actual secret values only in backend environment variables (`.env`/container env).

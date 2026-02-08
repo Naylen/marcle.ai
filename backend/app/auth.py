@@ -56,4 +56,7 @@ def build_auth_params(auth_ref: AuthRef | None) -> dict[str, str]:
     if not value:
         raise MissingCredentialError(env_name)
 
+    if not getattr(auth_ref, "param_name", None):
+        raise InvalidCredentialFormatError(env_name, "query_param")
+
     return {auth_ref.param_name: value}  # validated in model
