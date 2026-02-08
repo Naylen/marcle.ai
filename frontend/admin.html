@@ -6,11 +6,11 @@
   <title>marcle.ai admin</title>
   <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="admin-page">
   <main class="admin-wrap">
     <header class="admin-page-header">
       <h1 class="admin-page-title">Admin · Service Configuration</h1>
-      <p class="admin-page-subtitle">Live configuration · changes apply immediately</p>
+      <p class="admin-page-subtitle">Runtime operations console · changes apply immediately</p>
     </header>
 
     <section class="admin-health-widget" aria-label="Live health preview">
@@ -43,12 +43,14 @@
     <section class="admin-panel" aria-labelledby="admin-auth-heading">
       <div class="admin-panel-heading">
         <h2 id="admin-auth-heading" class="admin-section-title">Authentication</h2>
-        <span id="auth-status-indicator" class="admin-chip admin-chip-muted">Not authenticated</span>
+        <span id="auth-status-indicator" class="admin-chip admin-chip-muted">Not connected</span>
       </div>
+      <p class="admin-panel-description">Cloudflare Access plus bearer token is required for all write operations.</p>
 
       <label class="admin-label" for="admin-token">Admin Token (required)</label>
       <input id="admin-token" class="admin-input" type="password" autocomplete="off" placeholder="Bearer token">
       <p class="admin-help">This token is never stored. It is required for each admin action.</p>
+      <p id="auth-connection-detail" class="admin-inline">No successful admin requests yet.</p>
 
       <div class="admin-actions-row">
         <button id="load-services-btn" class="admin-button" type="button" disabled>Load services</button>
@@ -60,11 +62,13 @@
         <h2 id="admin-services-heading" class="admin-section-title">Service List</h2>
         <p id="service-list-meta" class="admin-inline">No services loaded.</p>
       </div>
+      <p class="admin-panel-description">Current runtime configuration with public-health preview per service.</p>
 
       <div class="admin-table-wrap">
         <table class="admin-table">
           <thead>
             <tr>
+              <th scope="col" class="admin-col-select">Sel</th>
               <th scope="col">Name</th>
               <th scope="col">Group</th>
               <th scope="col">Health</th>
@@ -75,10 +79,23 @@
           </thead>
           <tbody id="service-list-body">
             <tr>
-              <td class="admin-empty" colspan="6">Load services to begin.</td>
+              <td class="admin-empty" colspan="7">Load services to begin.</td>
             </tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section class="admin-panel" aria-labelledby="admin-bulk-heading">
+      <div class="admin-panel-heading">
+        <h2 id="admin-bulk-heading" class="admin-section-title">Bulk Actions</h2>
+        <p id="bulk-selection-meta" class="admin-inline">No services selected.</p>
+      </div>
+      <p class="admin-panel-description">Apply enable/disable to multiple selected services.</p>
+      <div class="admin-actions-row">
+        <button id="bulk-select-all-btn" class="admin-button admin-button-quiet" type="button" disabled>Select all</button>
+        <button id="bulk-enable-btn" class="admin-button" type="button" disabled>Enable selected</button>
+        <button id="bulk-disable-btn" class="admin-button admin-button-danger-ghost" type="button" disabled>Disable selected</button>
       </div>
     </section>
 
@@ -90,6 +107,7 @@
           <button id="audit-refresh-btn" class="admin-button admin-button-small admin-button-quiet" type="button" disabled>Refresh</button>
         </div>
       </div>
+      <p class="admin-panel-description">Append-only activity log for admin mutations.</p>
 
       <div class="admin-audit-filters">
         <div class="admin-field">
@@ -134,6 +152,7 @@
         <h2 id="service-form-heading" class="admin-section-title">Add Service</h2>
         <button id="cancel-edit-btn" class="admin-button admin-button-quiet is-hidden" type="button">Cancel edit</button>
       </div>
+      <p class="admin-panel-description">Create or edit service definitions used by the status checker.</p>
 
       <p id="service-form-mode-note" class="admin-help">Create a new service entry.</p>
       <p id="service-save-message" class="admin-success is-hidden" role="status" aria-live="polite">Service saved.</p>

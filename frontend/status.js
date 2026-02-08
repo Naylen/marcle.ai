@@ -59,12 +59,13 @@
     // Update overall indicator
     const dot = document.querySelector('.meta-dot');
     if (dot) {
-      dot.className = 'meta-dot ' + (data.overall_status || 'unknown');
+      var overallStatus = normalizeStatus(data.overall_status || 'unknown');
+      dot.className = 'meta-dot ' + overallStatus;
       const label = dot.parentElement;
       if (label) {
         label.innerHTML = '';
         label.appendChild(dot);
-        label.appendChild(document.createTextNode(' systems ' + (data.overall_status || 'unknown')));
+        label.appendChild(document.createTextNode(' systems ' + overallStatus));
       }
     }
 
@@ -81,29 +82,37 @@
 
     statusGrid.innerHTML = data.services.map(function (svc) {
       var latency = svc.latency_ms != null ? svc.latency_ms + 'ms' : '—';
-      var group = svc.group || '';
-      var statusValue = svc.status || 'unknown';
+      var checked = svc.last_checked ? formatRelativeTime(svc.last_checked) : '—';
+      var group = svc.group || 'service';
+      var statusValue = normalizeStatus(svc.status);
+      var statusLabel = titleCaseStatus(statusValue);
       var changeLabel = getChangeLabel(svc, overviewByService[svc.id]);
       var changeMarkup = changeLabel
         ? '<span class="status-card-change">' + escapeHtml(changeLabel) + '</span>'
         : '';
       var serviceId = svc.id || '';
+      var serviceName = svc.name || serviceId || 'Unknown service';
+      var iconValue = serviceIconForCard(svc);
       return (
-        '<button type="button" class="status-card status-card-button" data-service-id="' + escapeAttribute(serviceId) + '" data-status="' + escapeAttribute(statusValue) + '" aria-label="Open details for ' + escapeAttribute(svc.name || serviceId) + ' — status: ' + escapeAttribute(statusValue) + '">' +
+        '<button type="button" class="status-card status-card-button" data-service-id="' + escapeAttribute(serviceId) + '" data-status="' + escapeAttribute(statusValue) + '" aria-label="Open details for ' + escapeAttribute(serviceName) + ' — status: ' + escapeAttribute(statusLabel) + '">' +
           '<div class="status-card-top">' +
-            '<span class="status-card-group">' + escapeHtml(group) + '</span>' +
-            '<div style="display:flex;align-items:center;gap:0.35rem">' +
-              '<span class="status-card-status-label ' + escapeHtml(statusValue) + '">' + escapeHtml(statusValue) + '</span>' +
-              '<span class="status-indicator ' + escapeHtml(statusValue) + '"></span>' +
+            '<div class="status-card-main">' +
+              '<span class="status-card-icon" aria-hidden="true">' + escapeHtml(iconValue) + '</span>' +
+              '<div class="status-card-title-wrap">' +
+                '<span class="status-card-name">' + escapeHtml(serviceName) + '</span>' +
+                '<span class="status-card-group">' + escapeHtml(group) + '</span>' +
+              '</div>' +
+            '</div>' +
+            '<div class="status-card-status-wrap">' +
+              '<span class="status-card-status-pill ' + escapeHtml(statusValue) + '">' + escapeHtml(statusLabel) + '</span>' +
+              '<span class="status-indicator ' + escapeHtml(statusValue) + '" aria-hidden="true"></span>' +
             '</div>' +
           '</div>' +
-          '<div class="status-card-main">' +
-            '<span class="status-card-name">' + escapeHtml(svc.name) + '</span>' +
-          '</div>' +
           '<div class="status-card-meta">' +
-            '<span class="status-card-latency">' + latency + '</span>' +
-            changeMarkup +
+            '<span class="status-card-latency">Latency ' + escapeHtml(latency) + '</span>' +
+            '<span class="status-card-checked">Checked ' + escapeHtml(checked) + '</span>' +
           '</div>' +
+          changeMarkup +
         '</button>'
       );
     }).join('');
@@ -166,7 +175,7 @@
     var ageSeconds = secondsSinceIso(incident.at);
     var ago = ageSeconds == null ? 'unknown time' : humanizeDuration(ageSeconds) + ' ago';
     var serviceName = serviceNameForId(statusData, incident.service_id);
-    incidentBanner.textContent = serviceName + ' changed: ' + incident.from + ' \u2192 ' + incident.to + ' (' + ago + ')';
+    incidentBanner.textContent = 'Incident: ' + serviceName + ' changed ' + titleCaseStatus(incident.from) + ' \u2192 ' + titleCaseStatus(incident.to) + ' (' + ago + ')';
 
     // Apply severity styling
     var bannerClass = classifyIncident(incident);
@@ -253,6 +262,36 @@
     return absolute + ' (' + relative + ')';
   }
 
+  function normalizeStatus(statusValue) {
+    if (!statusValue || typeof statusValue !== 'string') return 'unknown';
+    var lowered = statusValue.toLowerCase();
+    if (lowered === 'healthy' || lowered === 'degraded' || lowered === 'down' || lowered === 'unknown') {
+      return lowered;
+    }
+    return 'unknown';
+  }
+
+  function titleCaseStatus(statusValue) {
+    var normalized = normalizeStatus(statusValue);
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+  }
+
+  function serviceIconForCard(service) {
+    if (service && typeof service.icon === 'string' && service.icon.trim()) {
+      var iconValue = service.icon.trim();
+      var iconChars = Array.from(iconValue);
+      if (iconChars.length > 0) {
+        return iconChars.slice(0, 2).join('');
+      }
+    }
+    var fallback = '';
+    if (service) {
+      fallback = service.name || service.id || '';
+    }
+    var firstChar = Array.from((fallback || '').trim())[0] || '?';
+    return firstChar.toUpperCase();
+  }
+
   function statusSeverity(status) {
     if (status === 'healthy') return 0;
     if (status === 'unknown') return 1;
@@ -326,10 +365,10 @@
     if (drawerTitle) {
       drawerTitle.textContent = title || 'Service Details';
     }
-    var normalizedStatus = typeof statusValue === 'string' ? statusValue : 'unknown';
+    var normalizedStatus = normalizeStatus(statusValue);
     if (drawerStatusPill) {
       drawerStatusPill.className = 'drawer-status-pill ' + normalizedStatus;
-      drawerStatusPill.textContent = normalizedStatus;
+      drawerStatusPill.textContent = titleCaseStatus(normalizedStatus);
     }
     // Apply accent to header
     var header = drawerPanel ? drawerPanel.querySelector('.service-drawer-header') : null;
@@ -343,7 +382,9 @@
     if (!service) return;
     setDrawerHeader(service.name || service.id || 'Service Details', service.status);
     if (drawerFieldStatus) {
-      drawerFieldStatus.textContent = service.status || 'unknown';
+      var normalizedStatus = normalizeStatus(service.status);
+      drawerFieldStatus.className = 'drawer-value drawer-value-status ' + normalizedStatus;
+      drawerFieldStatus.textContent = titleCaseStatus(normalizedStatus);
     }
     if (drawerFieldLatency) {
       drawerFieldLatency.textContent = service.latency_ms != null ? service.latency_ms + 'ms' : '—';
@@ -393,8 +434,8 @@
 
     drawerIncidentsEmpty.classList.add('is-hidden');
     drawerIncidents.innerHTML = incidents.slice(0, DRAWER_INCIDENT_LIMIT).map(function (incident) {
-      var fromStatus = incident && incident.from ? incident.from : 'unknown';
-      var toStatus = incident && incident.to ? incident.to : 'unknown';
+      var fromStatus = incident && incident.from ? titleCaseStatus(incident.from) : 'Unknown';
+      var toStatus = incident && incident.to ? titleCaseStatus(incident.to) : 'Unknown';
       var incidentClass = classifyIncident(incident);
       var relative = incident && incident.at ? formatRelativeTime(incident.at) : 'unknown time';
       return (

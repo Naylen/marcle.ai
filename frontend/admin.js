@@ -12,6 +12,7 @@
   var tokenInput = document.getElementById("admin-token");
   var loadServicesBtn = document.getElementById("load-services-btn");
   var authStatusIndicator = document.getElementById("auth-status-indicator");
+  var authConnectionDetail = document.getElementById("auth-connection-detail");
   var errorBox = document.getElementById("admin-error");
 
   var healthOverall = document.getElementById("admin-health-overall");
@@ -25,6 +26,10 @@
 
   var serviceListBody = document.getElementById("service-list-body");
   var serviceListMeta = document.getElementById("service-list-meta");
+  var bulkSelectionMeta = document.getElementById("bulk-selection-meta");
+  var bulkSelectAllBtn = document.getElementById("bulk-select-all-btn");
+  var bulkEnableBtn = document.getElementById("bulk-enable-btn");
+  var bulkDisableBtn = document.getElementById("bulk-disable-btn");
   var auditTableBody = document.getElementById("audit-table-body");
   var auditListMeta = document.getElementById("audit-list-meta");
   var auditRefreshBtn = document.getElementById("audit-refresh-btn");
@@ -71,7 +76,9 @@
     auth_header_name: document.getElementById("service-auth-header-name-error")
   };
 
-  if (!tokenInput || !loadServicesBtn || !serviceListBody || !serviceForm || !saveServiceBtn ||
+  if (!tokenInput || !loadServicesBtn || !authStatusIndicator || !serviceListBody ||
+      !bulkSelectionMeta || !bulkSelectAllBtn || !bulkEnableBtn || !bulkDisableBtn ||
+      !serviceForm || !saveServiceBtn ||
       !auditTableBody || !auditListMeta || !auditRefreshBtn || !auditActionFilter || !auditSearchInput) {
     return;
   }
@@ -93,6 +100,8 @@
   var pendingDeleteServiceId = null;
   var isLoading = false;
   var isAuthenticated = false;
+  var lastAdminSuccessAt = null;
+  var selectedServiceIds = {};
   var hasTriedSave = false;
   var touchedFields = {};
   var saveMessageTimer = null;
@@ -196,16 +205,65 @@
     }, 3500);
   }
 
+  function selectedServiceIdList() {
+    return Object.keys(selectedServiceIds);
+  }
+
+  function syncSelectedServices() {
+    var nextSelected = {};
+    currentServices.forEach(function (service) {
+      if (service && service.id && selectedServiceIds[service.id]) {
+        nextSelected[service.id] = true;
+      }
+    });
+    selectedServiceIds = nextSelected;
+  }
+
+  function renderBulkSelectionMeta() {
+    var selectedCount = selectedServiceIdList().length;
+    var total = currentServices.length;
+
+    if (!total) {
+      bulkSelectionMeta.textContent = "No services loaded.";
+      bulkSelectAllBtn.textContent = "Select all";
+      return;
+    }
+
+    bulkSelectionMeta.textContent = selectedCount + " selected of " + total + ".";
+    bulkSelectAllBtn.textContent = selectedCount > 0 && selectedCount === total
+      ? "Clear selection"
+      : "Select all";
+  }
+
+  function updateConnectionDetail() {
+    if (!authConnectionDetail) return;
+
+    if (isAuthenticated && lastAdminSuccessAt) {
+      authConnectionDetail.textContent = "Connected to admin API. Last success " + formatRelativeTime(lastAdminSuccessAt) + ".";
+      return;
+    }
+
+    if (hasToken()) {
+      authConnectionDetail.textContent = "Token set. Run an admin action to verify API connectivity.";
+      return;
+    }
+
+    authConnectionDetail.textContent = "No successful admin requests yet.";
+  }
+
   function setAuthIndicator(authenticated) {
     isAuthenticated = !!authenticated;
     if (isAuthenticated) {
-      authStatusIndicator.textContent = "Authenticated";
+      lastAdminSuccessAt = new Date().toISOString();
+      authStatusIndicator.textContent = "Connected";
       authStatusIndicator.className = "admin-chip admin-chip-success";
+      updateConnectionDetail();
       renderAuditEntries();
       return;
     }
-    authStatusIndicator.textContent = "Not authenticated";
+    authStatusIndicator.textContent = "Not connected";
     authStatusIndicator.className = "admin-chip admin-chip-muted";
+    updateConnectionDetail();
     renderAuditEntries();
   }
 
@@ -618,10 +676,13 @@
   function renderServices(services) {
     currentServices = Array.isArray(services) ? services.slice() : [];
     servicesById = {};
+    syncSelectedServices();
 
     if (!services || services.length === 0) {
-      serviceListBody.innerHTML = "<tr><td class='admin-empty' colspan='6'>No services configured.</td></tr>";
+      selectedServiceIds = {};
+      serviceListBody.innerHTML = "<tr><td class='admin-empty' colspan='7'>No services configured.</td></tr>";
       renderServiceListMeta(0);
+      renderBulkSelectionMeta();
       updateActionAvailability();
       return;
     }
@@ -637,9 +698,12 @@
       var toggleLabel = service.enabled ? "Enabled" : "Disabled";
       var enabledState = service.enabled ? "enabled" : "disabled";
       var accessibleName = service.name || service.id;
+      var isSelected = selectedServiceIds[service.id] === true;
+      var selectedAttr = isSelected ? " checked" : "";
 
       return (
         "<tr data-service-id='" + escapeHtml(service.id) + "'>" +
+          "<td class='admin-select-cell'><input type='checkbox' class='admin-row-select' data-service-select='1' data-service-id='" + escapeHtml(service.id) + "' aria-label='Select " + escapeHtml(accessibleName) + " for bulk actions'" + selectedAttr + disabledAttr + "></td>" +
           "<td>" +
             "<span class='admin-service-name'>" + escapeHtml(accessibleName) + "</span>" +
             "<span class='admin-service-id'>" + escapeHtml(service.id) + "</span>" +
@@ -663,6 +727,7 @@
     }).join("");
 
     renderServiceListMeta(services.length);
+    renderBulkSelectionMeta();
     updateActionAvailability();
   }
 
@@ -828,6 +893,7 @@
 
   function updateActionAvailability() {
     var tokenReady = hasToken();
+    var selectedCount = selectedServiceIdList().length;
 
     loadServicesBtn.disabled = !tokenReady || isLoading;
     auditRefreshBtn.disabled = !tokenReady || isLoading;
@@ -836,6 +902,9 @@
     });
     resetServiceFormBtn.disabled = !tokenReady || isLoading;
     cancelEditBtn.disabled = !tokenReady || isLoading;
+    bulkSelectAllBtn.disabled = !tokenReady || isLoading || currentServices.length === 0;
+    bulkEnableBtn.disabled = !tokenReady || isLoading || selectedCount === 0;
+    bulkDisableBtn.disabled = !tokenReady || isLoading || selectedCount === 0;
 
     if (isDeleteModalOpen()) {
       deleteConfirmBtn.disabled = !tokenReady || isLoading;
@@ -845,11 +914,49 @@
     Array.prototype.forEach.call(serviceListBody.querySelectorAll("button[data-action]"), function (button) {
       button.disabled = !tokenReady || isLoading;
     });
+    Array.prototype.forEach.call(serviceListBody.querySelectorAll("input[data-service-select='1']"), function (input) {
+      input.disabled = !tokenReady || isLoading;
+    });
 
     var values = collectFormValues();
     var errors = getValidationErrors(values);
     renderValidation(errors);
     saveServiceBtn.disabled = !tokenReady || isLoading || Object.keys(errors).length > 0;
+    renderBulkSelectionMeta();
+    updateConnectionDetail();
+  }
+
+  function setAllServiceSelections(shouldSelect) {
+    selectedServiceIds = {};
+    if (shouldSelect) {
+      currentServices.forEach(function (service) {
+        if (service && service.id) selectedServiceIds[service.id] = true;
+      });
+    }
+    renderServices(currentServices);
+  }
+
+  async function applyBulkEnabled(enabled, triggerButton, busyLabel) {
+    if (!hasToken()) return;
+    var ids = selectedServiceIdList();
+    if (!ids.length) return;
+
+    showError("");
+    hideSaveMessage();
+
+    await runAction(triggerButton, busyLabel, async function () {
+      await requestJson(ADMIN_URL + "/bulk", {
+        method: "POST",
+        headers: adminHeaders(),
+        body: JSON.stringify({
+          ids: ids,
+          enabled: !!enabled
+        })
+      }, true);
+
+      selectedServiceIds = {};
+      await loadServicesAndStatus();
+    });
   }
 
   async function refreshHealthPreview() {
@@ -913,6 +1020,8 @@
     setAuthIndicator(false);
     showError("");
     auditEntries = [];
+    selectedServiceIds = {};
+    if (currentServices.length > 0) renderServices(currentServices);
     renderAuditEntries();
     setAuditMeta("Authenticate to load.");
     updateActionAvailability();
@@ -925,6 +1034,22 @@
     await runAction(loadServicesBtn, "Loading...", async function () {
       await loadServicesAndStatus();
     });
+  });
+
+  bulkSelectAllBtn.addEventListener("click", function () {
+    if (!hasToken() || isLoading || currentServices.length === 0) return;
+
+    var selectedCount = selectedServiceIdList().length;
+    var shouldClear = selectedCount > 0 && selectedCount === currentServices.length;
+    setAllServiceSelections(!shouldClear);
+  });
+
+  bulkEnableBtn.addEventListener("click", async function () {
+    await applyBulkEnabled(true, bulkEnableBtn, "Enabling...");
+  });
+
+  bulkDisableBtn.addEventListener("click", async function () {
+    await applyBulkEnabled(false, bulkDisableBtn, "Disabling...");
   });
 
   serviceForm.addEventListener("submit", async function (evt) {
@@ -1042,6 +1167,19 @@
     if (action === "delete") openDeleteModal(serviceId);
   });
 
+  serviceListBody.addEventListener("change", function (evt) {
+    var checkbox = evt.target.closest("input[data-service-select='1']");
+    if (!checkbox) return;
+
+    var serviceId = checkbox.getAttribute("data-service-id");
+    if (!serviceId || !Object.prototype.hasOwnProperty.call(servicesById, serviceId)) return;
+
+    if (checkbox.checked) selectedServiceIds[serviceId] = true;
+    else delete selectedServiceIds[serviceId];
+
+    updateActionAvailability();
+  });
+
   auditRefreshBtn.addEventListener("click", async function () {
     if (!hasToken()) return;
     showError("");
@@ -1123,9 +1261,12 @@
 
   setAuthIndicator(false);
   applyAddMode(true);
+  renderBulkSelectionMeta();
+  updateConnectionDetail();
   updateActionAvailability();
 
   refreshHealthPreview();
+  setInterval(updateConnectionDetail, 30000);
   setInterval(refreshHealthPreview, HEALTH_POLL_INTERVAL);
   setInterval(function () {
     if (!hasToken() || !isAuthenticated || isLoading) return;
