@@ -1581,6 +1581,11 @@ body.admin-page {
   padding: 1rem;
 }
 
+.admin-modal-backdrop.is-hidden,
+.admin-modal-backdrop[hidden] {
+  display: none !important;
+}
+
 .admin-modal {
   width: min(27rem, 100%);
   border: 1px solid var(--border);

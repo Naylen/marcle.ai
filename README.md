@@ -1,6 +1,6 @@
 # marcle.ai
 
-Public landing page plus status/admin API for a personal homelab environment.
+Public, read-only homelab operations dashboard with a protected runtime admin API.
 
 ## Structure
 
@@ -29,8 +29,8 @@ Backend container port `8000` is internal-only by default in `docker-compose.yml
 ## Frontend
 
 Plain HTML + CSS + minimal JS. No build step. No frameworks.
-- Public page fetches `/api/status` and renders service cards.
-- Admin page uses `/api/admin/services` with bearer token auth.
+- Public dashboard fetches `/api/status` and `/api/overview` for service tiles, overview widgets, incident banner, and service detail drawer.
+- Admin dashboard uses bearer token auth for runtime service management, bulk enable/disable, health preview, and audit log viewing.
 
 To point the frontend at a different API origin, set `window.MARCLE_API_BASE` before the script loads, or configure your reverse proxy to route `/api/*` to the backend.
 
@@ -38,6 +38,16 @@ To point the frontend at a different API origin, set `window.MARCLE_API_BASE` be
 
 ### Running locally (without Docker)
 
+PowerShell:
+```powershell
+cd backend
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+Bash:
 ```bash
 cd backend
 python -m venv .venv && source .venv/bin/activate
@@ -47,7 +57,7 @@ uvicorn app.main:app --reload
 
 ### API
 
-Public endpoint:
+Public endpoints:
 - `GET /api/status`
 - `GET /api/overview`
 - `GET /api/incidents?limit=50`
@@ -111,6 +121,7 @@ See `.env.example`. All are optional; unconfigured or missing-credential service
 
 Important:
 - `ADMIN_TOKEN` controls admin API access.
+- `CHECK_TIMEOUT_SECONDS` optionally overrides per-check timeout (defaults to `REQUEST_TIMEOUT_SECONDS`).
 - `SERVICES_CONFIG_PATH` points to runtime config file (default `/data/services.json`).
 - `OBSERVATIONS_PATH` points to persisted operational metadata (default `/data/observations.json`).
 - `OBSERVATIONS_HISTORY_LIMIT` caps stored incident history entries (default `200`).
@@ -127,6 +138,7 @@ Important:
 ## Deployment
 
 Designed to run behind a Cloudflare Tunnel. No inbound ports required. TLS handled by the tunnel.
+In production, keep `/admin` behind Cloudflare Access and still require `Authorization: Bearer <ADMIN_TOKEN>` at the backend.
 
 ```
 Internet → Cloudflare Tunnel → reverse proxy → frontend (nginx :80)
