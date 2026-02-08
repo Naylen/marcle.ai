@@ -7,6 +7,17 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body class="admin-page">
+  <header class="site-header">
+    <div class="header-inner">
+      <a href="/" class="wordmark">marcle<span class="dot">.</span>ai</a>
+      <nav class="header-nav">
+        <a href="/#systems" class="nav-link">systems</a>
+        <a href="/#status" class="nav-link">status</a>
+        <a href="/admin" class="nav-link">admin</a>
+      </nav>
+    </div>
+  </header>
+
   <main class="admin-wrap">
     <header class="admin-page-header">
       <h1 class="admin-page-title">Admin · Service Configuration</h1>
@@ -40,9 +51,9 @@
 
     <div id="admin-error" class="admin-alert is-hidden" role="alert" aria-live="polite"></div>
 
-    <section class="admin-panel" aria-labelledby="admin-auth-heading">
+    <section class="admin-panel admin-panel-auth" aria-labelledby="admin-auth-heading">
       <div class="admin-panel-heading">
-        <h2 id="admin-auth-heading" class="admin-section-title">Authentication</h2>
+        <h2 id="admin-auth-heading" class="admin-section-title" data-step="1">Authentication</h2>
         <span id="auth-status-indicator" class="admin-chip admin-chip-muted">Not connected</span>
       </div>
       <p class="admin-panel-description">Cloudflare Access plus bearer token is required for all write operations.</p>
@@ -57,9 +68,9 @@
       </div>
     </section>
 
-    <section class="admin-panel" aria-labelledby="admin-services-heading">
+    <section class="admin-panel admin-panel-services" aria-labelledby="admin-services-heading">
       <div class="admin-panel-heading">
-        <h2 id="admin-services-heading" class="admin-section-title">Service List</h2>
+        <h2 id="admin-services-heading" class="admin-section-title" data-step="2">Service List</h2>
         <p id="service-list-meta" class="admin-inline">No services loaded.</p>
       </div>
       <p class="admin-panel-description">Current runtime configuration with public-health preview per service.</p>
@@ -86,9 +97,9 @@
       </div>
     </section>
 
-    <section class="admin-panel" aria-labelledby="admin-bulk-heading">
+    <section class="admin-panel admin-panel-bulk" aria-labelledby="admin-bulk-heading">
       <div class="admin-panel-heading">
-        <h2 id="admin-bulk-heading" class="admin-section-title">Bulk Actions</h2>
+        <h2 id="admin-bulk-heading" class="admin-section-title" data-step="3">Bulk Actions</h2>
         <p id="bulk-selection-meta" class="admin-inline">No services selected.</p>
       </div>
       <p class="admin-panel-description">Apply enable/disable to multiple selected services.</p>
@@ -99,9 +110,9 @@
       </div>
     </section>
 
-    <section class="admin-panel" aria-labelledby="admin-audit-heading">
+    <section class="admin-panel admin-panel-audit" aria-labelledby="admin-audit-heading">
       <div class="admin-panel-heading">
-        <h2 id="admin-audit-heading" class="admin-section-title">Audit Log</h2>
+        <h2 id="admin-audit-heading" class="admin-section-title" data-step="5">Audit Log</h2>
         <div class="admin-actions-row admin-actions-row-inline">
           <p id="audit-list-meta" class="admin-inline">Not loaded.</p>
           <button id="audit-refresh-btn" class="admin-button admin-button-small admin-button-quiet" type="button" disabled>Refresh</button>
@@ -147,9 +158,9 @@
       </div>
     </section>
 
-    <section class="admin-panel" aria-labelledby="service-form-heading">
+    <section class="admin-panel admin-panel-form" aria-labelledby="service-form-heading">
       <div class="admin-panel-heading">
-        <h2 id="service-form-heading" class="admin-section-title">Add Service</h2>
+        <h2 id="service-form-heading" class="admin-section-title" data-step="4">Add Service</h2>
         <button id="cancel-edit-btn" class="admin-button admin-button-quiet is-hidden" type="button">Cancel edit</button>
       </div>
       <p class="admin-panel-description">Create or edit service definitions used by the status checker.</p>
