@@ -344,6 +344,24 @@
     return null;
   }
 
+  function mergeServiceForDrawer(serviceId, detailService) {
+    var statusService = serviceFromStatus(serviceId);
+    if (!statusService && !detailService) return null;
+    if (!statusService) return detailService;
+    if (!detailService) return statusService;
+
+    var merged = Object.assign({}, statusService, detailService);
+    var statusExtra = statusService.extra && typeof statusService.extra === 'object' ? statusService.extra : null;
+    if (!merged.extra || typeof merged.extra !== 'object') {
+      merged.extra = statusExtra;
+      return merged;
+    }
+    if (statusExtra && Array.isArray(statusExtra.now_playing) && !Array.isArray(merged.extra.now_playing)) {
+      merged.extra.now_playing = statusExtra.now_playing;
+    }
+    return merged;
+  }
+
   function showDrawerLoading() {
     if (drawerLoading) drawerLoading.style.display = '';
     if (drawerBody) drawerBody.classList.add('is-hidden');
@@ -548,7 +566,8 @@
       var incidents = await resolveIncidentsForService(serviceId, payload.recent_incidents);
       if (requestToken !== drawerRequestToken || selectedServiceId !== serviceId) return;
 
-      renderDrawerFields(payload.service);
+      var serviceForDrawer = mergeServiceForDrawer(serviceId, payload.service);
+      renderDrawerFields(serviceForDrawer);
       renderDrawerIncidents(incidents);
       hideDrawerLoading();
       setDrawerError('');
