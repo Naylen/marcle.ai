@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import re
 import time
 from typing import Any
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
@@ -26,12 +28,28 @@ class PlexProbeResult:
         identity_ok: bool,
         sessions_ok: bool,
         auth_ok: bool,
+        sessions_http_status: int | None,
+        sessions_parse_count: int,
+        sessions_error_class: str | None,
+        sessions_content_type: str | None = None,
+        sessions_body_prefix: str | None = None,
+        sessions_total_size: int | None = None,
+        sessions_root_tag: str | None = None,
+        sessions_child_tags_sample: list[str] | None = None,
     ) -> None:
         self.service_status = service_status
         self.now_playing = now_playing
         self.identity_ok = identity_ok
         self.sessions_ok = sessions_ok
         self.auth_ok = auth_ok
+        self.sessions_http_status = sessions_http_status
+        self.sessions_parse_count = sessions_parse_count
+        self.sessions_error_class = sessions_error_class
+        self.sessions_content_type = sessions_content_type
+        self.sessions_body_prefix = sessions_body_prefix
+        self.sessions_total_size = sessions_total_size
+        self.sessions_root_tag = sessions_root_tag
+        self.sessions_child_tags_sample = sessions_child_tags_sample or []
 
 
 async def check_plex_service(service: ServiceConfig) -> ServiceStatus:
@@ -53,6 +71,9 @@ async def check_plex_service(service: ServiceConfig) -> ServiceStatus:
             "identity_ok": False,
             "sessions_ok": False,
             "auth_ok": True,
+            "sessions_http_status": None,
+            "sessions_parse_count": 0,
+            "sessions_error_class": None,
         }
         return base_status
 
@@ -66,6 +87,9 @@ async def check_plex_service(service: ServiceConfig) -> ServiceStatus:
             "identity_ok": False,
             "sessions_ok": False,
             "auth_ok": True,
+            "sessions_http_status": None,
+            "sessions_parse_count": 0,
+            "sessions_error_class": "MissingCredentialError",
         }
         return base_status
     except InvalidCredentialFormatError:
@@ -75,16 +99,33 @@ async def check_plex_service(service: ServiceConfig) -> ServiceStatus:
             "identity_ok": False,
             "sessions_ok": False,
             "auth_ok": True,
+            "sessions_http_status": None,
+            "sessions_parse_count": 0,
+            "sessions_error_class": "InvalidCredentialFormatError",
         }
         return base_status
 
     result = await _probe_plex(service, auth_params)
-    result.service_status.extra = {
+    extra_payload = {
         "now_playing": result.now_playing,
         "identity_ok": result.identity_ok,
         "sessions_ok": result.sessions_ok,
         "auth_ok": result.auth_ok,
+        "sessions_http_status": result.sessions_http_status,
+        "sessions_parse_count": result.sessions_parse_count,
+        "sessions_error_class": result.sessions_error_class,
     }
+    if _debug_plex_sessions_enabled():
+        extra_payload.update(
+            {
+                "sessions_content_type": result.sessions_content_type,
+                "sessions_body_prefix": result.sessions_body_prefix,
+                "sessions_total_size": result.sessions_total_size,
+                "sessions_root_tag": result.sessions_root_tag,
+                "sessions_child_tags_sample": result.sessions_child_tags_sample,
+            }
+        )
+    result.service_status.extra = extra_payload
     return result.service_status
 
 
@@ -105,6 +146,14 @@ async def _probe_plex(service: ServiceConfig, auth_params: dict[str, str]) -> Pl
     sessions_ok = False
     auth_ok = True
     now_playing: list[dict[str, Any]] = []
+    sessions_http_status: int | None = None
+    sessions_error_class: str | None = None
+    sessions_content_type: str | None = None
+    sessions_body_prefix: str | None = None
+    sessions_total_size: int | None = None
+    sessions_root_tag: str | None = None
+    sessions_child_tags_sample: list[str] = []
+    debug_enabled = _debug_plex_sessions_enabled()
 
     start = time.monotonic()
     try:
@@ -115,16 +164,27 @@ async def _probe_plex(service: ServiceConfig, auth_params: dict[str, str]) -> Pl
                 auth_ok = False
 
             sessions_response = await _get_plex_endpoint(client, service.url, "/status/sessions", auth_params)
+            sessions_http_status = sessions_response.status_code
             sessions_ok = 200 <= sessions_response.status_code < 300
+            sessions_content_type = sessions_response.headers.get("content-type")
+            sessions_total_size = len(sessions_response.text or "")
+            if debug_enabled:
+                sessions_body_prefix = _redact_plex_token(sessions_response.text[:120])
             if sessions_response.status_code in {401, 403}:
                 auth_ok = False
 
             if sessions_ok:
-                now_playing = _parse_sessions_xml(sessions_response.text)
+                now_playing, parse_error_class, sessions_root_tag, sessions_child_tags_sample = _parse_sessions_xml(
+                    sessions_response.text
+                )
+                if parse_error_class:
+                    sessions_error_class = parse_error_class
     except httpx.TimeoutException:
         logger.warning("Timeout probing Plex endpoints")
+        sessions_error_class = "TimeoutException"
     except Exception as exc:
         logger.warning("Unexpected Plex probe error (%s)", exc.__class__.__name__)
+        sessions_error_class = exc.__class__.__name__
 
     latency = int((time.monotonic() - start) * 1000)
 
@@ -146,6 +206,14 @@ async def _probe_plex(service: ServiceConfig, auth_params: dict[str, str]) -> Pl
         identity_ok=identity_ok,
         sessions_ok=sessions_ok,
         auth_ok=auth_ok,
+        sessions_http_status=sessions_http_status,
+        sessions_parse_count=len(now_playing),
+        sessions_error_class=sessions_error_class,
+        sessions_content_type=sessions_content_type,
+        sessions_body_prefix=sessions_body_prefix,
+        sessions_total_size=sessions_total_size,
+        sessions_root_tag=sessions_root_tag,
+        sessions_child_tags_sample=sessions_child_tags_sample,
     )
 
 
@@ -165,28 +233,29 @@ async def _get_plex_endpoint(
     return await client.get(clean_url, params=request_params)
 
 
-def _parse_sessions_xml(payload: str) -> list[dict[str, Any]]:
+def _parse_sessions_xml(payload: str) -> tuple[list[dict[str, Any]], str | None, str | None, list[str]]:
     if not payload or not payload.strip():
-        return []
+        return [], None, None, []
 
     try:
         root = ElementTree.fromstring(payload)
     except ElementTree.ParseError:
         logger.warning("Failed to parse Plex sessions XML")
-        return []
+        return [], "ParseError", None, []
+
+    root_tag = _xml_local_name(root.tag)
+    child_tags_sample = _sample_tags(root, max_items=10)
 
     sessions: list[dict[str, Any]] = []
-    for item in root.iter():
+    for item in _find_media_nodes(root):
         tag_name = _xml_local_name(item.tag)
-        if tag_name not in {"Video", "Track"}:
-            continue
         media_type = tag_name.lower()
         session = {
             "type": "video" if media_type == "video" else "track",
-            "title": _attr_str(item, "title") or "Unknown",
+            "title": _attr_str(item, "title") or _attr_str(item, "grandparentTitle") or "Unknown",
             "grandparent": _attr_or_none(item, "grandparentTitle"),
             "parent": _attr_or_none(item, "parentTitle"),
-            "user": _session_user(item),
+            "user": _session_user(item) or _attr_or_none(item, "username"),
             "player": _session_player(item),
             "state": _session_state(item),
             "view_offset_ms": _attr_int(item, "viewOffset"),
@@ -194,25 +263,25 @@ def _parse_sessions_xml(payload: str) -> list[dict[str, Any]]:
         }
         sessions.append(session)
 
-    return sessions
+    return sessions, None, root_tag, child_tags_sample
 
 
 def _session_user(item: ElementTree.Element) -> str | None:
-    user = item.find("./User") or item.find(".//User")
+    user = _find_first_child_by_local_name(item, "User")
     if user is not None:
         return _attr_or_none(user, "title") or _attr_or_none(user, "name")
     return None
 
 
 def _session_player(item: ElementTree.Element) -> str | None:
-    player = item.find("./Player") or item.find(".//Player")
+    player = _find_first_child_by_local_name(item, "Player")
     if player is not None:
         return _attr_or_none(player, "title") or _attr_or_none(player, "product")
     return None
 
 
 def _session_state(item: ElementTree.Element) -> str | None:
-    player = item.find("./Player") or item.find(".//Player")
+    player = _find_first_child_by_local_name(item, "Player")
     if player is not None:
         return _attr_or_none(player, "state")
     return None
@@ -244,3 +313,47 @@ def _xml_local_name(tag: str) -> str:
     if "}" in tag:
         return tag.rsplit("}", 1)[-1]
     return tag
+
+
+def _find_media_nodes(root: ElementTree.Element) -> list[ElementTree.Element]:
+    direct_matches = root.findall(".//Video") + root.findall(".//Track")
+    if direct_matches:
+        return direct_matches
+
+    matches: list[ElementTree.Element] = []
+    for node in root.iter():
+        tag_name = _xml_local_name(node.tag)
+        if tag_name in {"Video", "Track"}:
+            matches.append(node)
+    return matches
+
+
+def _find_first_child_by_local_name(item: ElementTree.Element, local_name: str) -> ElementTree.Element | None:
+    for child in item.iter():
+        if child is item:
+            continue
+        if _xml_local_name(child.tag) == local_name:
+            return child
+    return None
+
+
+def _sample_tags(root: ElementTree.Element, max_items: int) -> list[str]:
+    tags: list[str] = []
+    for node in root.iter():
+        tag_name = _xml_local_name(node.tag)
+        if not tag_name:
+            continue
+        tags.append(tag_name)
+        if len(tags) >= max_items:
+            break
+    return tags
+
+
+def _debug_plex_sessions_enabled() -> bool:
+    return os.getenv("DEBUG_PLEX_SESSIONS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _redact_plex_token(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return re.sub(r"(?i)X-Plex-Token=[^&\\s\"'<>]+", "X-Plex-Token=REDACTED", value)

@@ -181,6 +181,15 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
+### Plex Manual Session Check (developer note)
+
+Use these commands from within the backend/container environment when debugging Plex now-playing. Do not commit or share token values.
+
+```bash
+curl "$PLEX_URL/identity?X-Plex-Token=$PLEX_TOKEN"
+curl "$PLEX_URL/status/sessions?X-Plex-Token=$PLEX_TOKEN"
+```
+
 ## Deployment
 
 Designed for Cloudflare Tunnel — no inbound ports, TLS handled by the tunnel.
