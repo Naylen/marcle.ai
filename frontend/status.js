@@ -40,9 +40,6 @@
   const drawerDescriptionWrap = document.getElementById('drawer-description-wrap');
   const drawerDescription = document.getElementById('drawer-description');
   const drawerOpenLink = document.getElementById('drawer-open-link');
-  const drawerNowPlayingSection = document.getElementById('drawer-now-playing-section');
-  const drawerNowPlaying = document.getElementById('drawer-now-playing');
-  const drawerNowPlayingEmpty = document.getElementById('drawer-now-playing-empty');
   const drawerIncidents = document.getElementById('drawer-incidents');
   const drawerIncidentsEmpty = document.getElementById('drawer-incidents-empty');
 
@@ -442,47 +439,68 @@
         drawerOpenLink.classList.add('is-hidden');
       }
     }
-    renderPlexNowPlaying(service);
+    renderNowPlaying(service);
   }
 
-  function renderPlexNowPlaying(service) {
-    if (!drawerNowPlayingSection || !drawerNowPlaying || !drawerNowPlayingEmpty) return;
+  function renderNowPlaying(service) {
+    var section = document.getElementById('drawer-now-playing-section');
+    var emptyEl = document.getElementById('drawer-now-playing-empty');
+    var listEl = document.getElementById('drawer-now-playing');
+    if (!section || !emptyEl || !listEl) return;
+
+    listEl.innerHTML = '';
+    emptyEl.textContent = 'Nothing playing right now.';
 
     if (!service || service.id !== 'plex') {
-      drawerNowPlayingSection.classList.add('is-hidden');
-      drawerNowPlaying.innerHTML = '';
-      drawerNowPlayingEmpty.textContent = 'Nothing playing right now.';
+      section.classList.add('is-hidden');
       return;
     }
 
-    drawerNowPlayingSection.classList.remove('is-hidden');
+    section.classList.remove('is-hidden');
 
     var extra = service.extra && typeof service.extra === 'object' ? service.extra : {};
-    var nowPlaying = Array.isArray(extra.now_playing) ? extra.now_playing : [];
-
-    if (nowPlaying.length === 0) {
-      drawerNowPlaying.innerHTML = '';
-      drawerNowPlayingEmpty.textContent = 'Nothing playing right now.';
-      drawerNowPlayingEmpty.classList.remove('is-hidden');
+    var sessions = Array.isArray(extra.now_playing) ? extra.now_playing : [];
+    if (sessions.length === 0) {
+      emptyEl.classList.remove('is-hidden');
       return;
     }
 
-    drawerNowPlayingEmpty.classList.add('is-hidden');
-    drawerNowPlaying.innerHTML = nowPlaying.map(function (session) {
+    emptyEl.classList.add('is-hidden');
+    sessions.forEach(function (session) {
       var title = session && session.title ? String(session.title) : 'Unknown';
+      var parent = session && session.parent ? String(session.parent) : null;
+      var grandparent = session && session.grandparent ? String(session.grandparent) : null;
+      var titleLine = grandparent ? grandparent + (parent ? ' · ' + parent : '') + ' — ' + title : title;
+
       var user = session && session.user ? String(session.user) : 'Unknown user';
       var player = session && session.player ? String(session.player) : 'Unknown player';
       var state = session && session.state ? String(session.state) : 'unknown';
       var meta = [user, player, state].join(' · ');
+
+      var item = document.createElement('li');
+      item.className = 'drawer-now-playing-item';
+
+      var titleEl = document.createElement('div');
+      titleEl.className = 'drawer-now-playing-title';
+      titleEl.textContent = titleLine;
+
+      var metaEl = document.createElement('div');
+      metaEl.className = 'drawer-now-playing-meta';
+      metaEl.textContent = meta;
+
+      item.appendChild(titleEl);
+      item.appendChild(metaEl);
+
       var progress = renderSessionProgress(session);
-      return (
-        '<li class="drawer-now-playing-item">' +
-          '<div class="drawer-now-playing-title">' + escapeHtml(title) + '</div>' +
-          '<div class="drawer-now-playing-meta">' + escapeHtml(meta) + '</div>' +
-          progress +
-        '</li>'
-      );
-    }).join('');
+      if (progress) {
+        var progressEl = document.createElement('div');
+        progressEl.className = 'drawer-now-playing-progress';
+        progressEl.textContent = progress;
+        item.appendChild(progressEl);
+      }
+
+      listEl.appendChild(item);
+    });
   }
 
   function renderSessionProgress(session) {
@@ -492,7 +510,7 @@
 
     var rawPercent = Math.round((offset / duration) * 100);
     var percent = Math.max(0, Math.min(100, rawPercent));
-    return '<div class="drawer-now-playing-progress">' + escapeHtml(String(percent)) + '%</div>';
+    return String(percent) + '%';
   }
 
   function renderDrawerIncidents(incidents) {
@@ -600,9 +618,7 @@
     setDrawerError('');
     if (drawerIncidents) drawerIncidents.innerHTML = '';
     if (drawerIncidentsEmpty) drawerIncidentsEmpty.classList.add('is-hidden');
-    if (drawerNowPlaying) drawerNowPlaying.innerHTML = '';
-    if (drawerNowPlayingEmpty) drawerNowPlayingEmpty.classList.add('is-hidden');
-    if (drawerNowPlayingSection) drawerNowPlayingSection.classList.add('is-hidden');
+    renderNowPlaying(null);
 
     drawerBackdrop.hidden = false;
     drawerBackdrop.classList.remove('is-hidden');
