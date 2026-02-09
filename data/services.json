@@ -26,9 +26,9 @@
       "description": "Media server",
       "verify_ssl": false,
       "auth_ref": {
-        "scheme": "header",
+        "scheme": "query_param",
         "env": "PLEX_TOKEN",
-        "header_name": "X-Plex-Token"
+        "param_name": "X-Plex-Token"
       }
     },
     {

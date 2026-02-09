@@ -18,6 +18,7 @@ from app import config
 from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers, build_auth_params
 from app.audit_log import audit_log_store
 from app.config_store import config_store
+from app.integrations.plex import check_plex_service
 from app.models import (
     AdminAuditEntry,
     AdminBulkServicesRequest,
@@ -59,11 +60,7 @@ CHECK_TYPE_PROFILES: dict[str, dict] = {
     "unifi-network": {"path": "/", "healthy_status_codes": {200, 302}},
     "unifi-protect": {"path": "/proxy/protect/api", "healthy_status_codes": {200}},
     "homeassistant": {"path": "/api/", "healthy_status_codes": {200}},
-    "plex": {
-        "path": "/identity",
-        "healthy_status_codes": {200},
-        "headers": {"Accept": "application/json"},
-    },
+    "plex": {"path": "/identity", "healthy_status_codes": {200}},
     "overseerr": {"path": "/api/v1/status", "healthy_status_codes": {200}},
     "tautulli": {"path": "/api/v2", "params": {"cmd": "status"}, "healthy_status_codes": {200}},
     "arrs": {"path": "/api/v3/health", "healthy_status_codes": {200}},
@@ -108,6 +105,9 @@ def _get_profile(service: ServiceConfig) -> dict:
 
 
 async def _check_service(service: ServiceConfig):
+    if service.check_type == "plex":
+        return await check_plex_service(service)
+
     profile = _get_profile(service)
     return await http_check(
         id=service.id,
@@ -372,6 +372,7 @@ async def get_service_details(service_id: str):
         "latency_ms": service.get("latency_ms"),
         "icon": service.get("icon"),
         "description": service.get("description"),
+        "extra": service.get("extra"),
         "last_checked": service.get("last_checked"),
         "last_changed_at": service_observation.get("last_changed_at"),
         "flapping": bool(service_observation.get("flapping", False)),

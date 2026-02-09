@@ -1,0 +1,122 @@
+%PDF-1.4
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 3929 >>
+stream
+BT
+/F1 11 Tf
+0 g
+/F1 15 Tf
+1 0 0 1 54.0 744.0 Tm (marcle.ai - One-Page App Summary) Tj
+/F1 10 Tf
+1 0 0 1 54.0 727.0 Tm (Evidence source: README.md, docker-compose.yml, frontend/*, backend/app/*) Tj
+/F1 12 Tf
+1 0 0 1 54.0 709.0 Tm (What it is) Tj
+/F1 10 Tf
+1 0 0 1 54.0 695.0 Tm (A self-hosted web app that combines a public homelab status dashboard with an authenticated Q&A) Tj
+/F1 10 Tf
+1 0 0 1 54.0 681.0 Tm (app at /ask. It serves static frontend pages through nginx and proxies API traffic to a FastAPI) Tj
+/F1 10 Tf
+1 0 0 1 54.0 667.0 Tm (backend.) Tj
+/F1 12 Tf
+1 0 0 1 54.0 651.0 Tm (Who it's for) Tj
+/F1 10 Tf
+1 0 0 1 58.0 637.0 Tm (- Primary persona: a self-hosting homelab operator \(owner/operator context appears) Tj
+/F1 10 Tf
+1 0 0 1 70.0 623.0 Tm (throughout README and frontend copy\).) Tj
+/F1 10 Tf
+1 0 0 1 58.0 609.0 Tm (- Secondary users: authenticated Ask users who submit questions and receive email answers.) Tj
+/F1 12 Tf
+1 0 0 1 54.0 593.0 Tm (What it does) Tj
+/F1 10 Tf
+1 0 0 1 58.0 579.0 Tm (- Publishes service health states \(healthy, degraded, down, unknown\) via /api/status and a) Tj
+/F1 10 Tf
+1 0 0 1 70.0 565.0 Tm (live dashboard.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 551.0 Tm (- Tracks incidents and exposes overview/service detail APIs with cache age, last incident,) Tj
+/F1 10 Tf
+1 0 0 1 70.0 537.0 Tm (and history.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 523.0 Tm (- Runs concurrent background checks on configured services with check-type profiles and auth) Tj
+/F1 10 Tf
+1 0 0 1 70.0 509.0 Tm (references.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 495.0 Tm (- Provides admin APIs/UI to create/update/toggle services, bulk enable/disable, and view) Tj
+/F1 10 Tf
+1 0 0 1 70.0 481.0 Tm (audit logs.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 467.0 Tm (- Supports configurable outbound notifications with endpoint filters and test dispatch.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 453.0 Tm (- Implements Google OAuth login for Ask, per-user points, and rate-limited question) Tj
+/F1 10 Tf
+1 0 0 1 70.0 439.0 Tm (submission.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 425.0 Tm (- Posts Ask questions to Discord webhook and accepts secure answer webhooks that email) Tj
+/F1 10 Tf
+1 0 0 1 70.0 411.0 Tm (users.) Tj
+/F1 12 Tf
+1 0 0 1 54.0 395.0 Tm (How it works \(architecture\)) Tj
+/F1 10 Tf
+1 0 0 1 58.0 381.0 Tm (- Frontend container \(nginx\): serves /, /admin, /ask static pages; proxies /api/* and) Tj
+/F1 10 Tf
+1 0 0 1 70.0 367.0 Tm (/healthz to backend:8000.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 353.0 Tm (- Backend container \(FastAPI\): status + admin endpoints in app.main, Ask routes in) Tj
+/F1 10 Tf
+1 0 0 1 70.0 339.0 Tm (app.routers.ask.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 325.0 Tm (- Data layer: JSON files for services, observations, notifications, and audit log under) Tj
+/F1 10 Tf
+1 0 0 1 70.0 311.0 Tm (/data; SQLite for Ask DB.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 297.0 Tm (- Flow: browser polls status/overview -> backend serves cached payload from refresh loop ->) Tj
+/F1 10 Tf
+1 0 0 1 70.0 283.0 Tm (observations update.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 269.0 Tm (- Ask flow: Google OAuth callback -> session cookie + SQLite user record -> question insert) Tj
+/F1 10 Tf
+1 0 0 1 70.0 255.0 Tm (and points decrement -> Discord webhook -> answer webhook -> email send.) Tj
+/F1 10 Tf
+1 0 0 1 58.0 241.0 Tm (- Dedicated distributed session store/queue worker: Not found in repo \(sessions and rate) Tj
+/F1 10 Tf
+1 0 0 1 70.0 227.0 Tm (limits are in-memory\).) Tj
+/F1 12 Tf
+1 0 0 1 54.0 211.0 Tm (How to run \(minimal\)) Tj
+/F1 10 Tf
+1 0 0 1 58.0 197.0 Tm (- Copy env template: cp .env.example .env) Tj
+/F1 10 Tf
+1 0 0 1 58.0 183.0 Tm (- Set required values in .env \(at minimum ADMIN_TOKEN to enable admin; Ask vars for) Tj
+/F1 10 Tf
+1 0 0 1 70.0 169.0 Tm (OAuth/Discord/SMTP if used\).) Tj
+/F1 10 Tf
+1 0 0 1 58.0 155.0 Tm (- Start containers: docker compose up --build) Tj
+/F1 10 Tf
+1 0 0 1 58.0 141.0 Tm (- Open: http://localhost:9182 \(status\), /ask \(Ask app\), /admin \(admin panel\).) Tj
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000000317 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+4297
+%%EOF

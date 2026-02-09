@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Literal, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -35,6 +35,7 @@ class ServiceStatus(BaseModel):
     url: Optional[str] = None
     description: Optional[str] = None
     icon: Optional[str] = None
+    extra: Optional[dict[str, Any]] = None
     last_checked: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 

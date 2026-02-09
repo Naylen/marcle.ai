@@ -846,6 +846,52 @@ code {
   display: none;
 }
 
+.drawer-now-playing-section {
+  margin-top: 1rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.82rem;
+}
+
+.drawer-now-playing-section.is-hidden {
+  display: none;
+}
+
+.drawer-now-playing {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.drawer-now-playing-item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  padding: 0.5rem 0.56rem;
+}
+
+.drawer-now-playing-title {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.drawer-now-playing-meta {
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+.drawer-now-playing-progress {
+  margin-top: 0.2rem;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
 .drawer-incidents-section {
   margin-top: 1rem;
   border-top: 1px solid var(--border);

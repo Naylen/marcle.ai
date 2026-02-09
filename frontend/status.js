@@ -40,6 +40,9 @@
   const drawerDescriptionWrap = document.getElementById('drawer-description-wrap');
   const drawerDescription = document.getElementById('drawer-description');
   const drawerOpenLink = document.getElementById('drawer-open-link');
+  const drawerNowPlayingSection = document.getElementById('drawer-now-playing-section');
+  const drawerNowPlaying = document.getElementById('drawer-now-playing');
+  const drawerNowPlayingEmpty = document.getElementById('drawer-now-playing-empty');
   const drawerIncidents = document.getElementById('drawer-incidents');
   const drawerIncidentsEmpty = document.getElementById('drawer-incidents-empty');
 
@@ -421,6 +424,57 @@
         drawerOpenLink.classList.add('is-hidden');
       }
     }
+    renderPlexNowPlaying(service);
+  }
+
+  function renderPlexNowPlaying(service) {
+    if (!drawerNowPlayingSection || !drawerNowPlaying || !drawerNowPlayingEmpty) return;
+
+    if (!service || service.id !== 'plex') {
+      drawerNowPlayingSection.classList.add('is-hidden');
+      drawerNowPlaying.innerHTML = '';
+      drawerNowPlayingEmpty.textContent = 'Nothing playing right now.';
+      return;
+    }
+
+    drawerNowPlayingSection.classList.remove('is-hidden');
+
+    var extra = service.extra && typeof service.extra === 'object' ? service.extra : {};
+    var nowPlaying = Array.isArray(extra.now_playing) ? extra.now_playing : [];
+
+    if (nowPlaying.length === 0) {
+      drawerNowPlaying.innerHTML = '';
+      drawerNowPlayingEmpty.textContent = 'Nothing playing right now.';
+      drawerNowPlayingEmpty.classList.remove('is-hidden');
+      return;
+    }
+
+    drawerNowPlayingEmpty.classList.add('is-hidden');
+    drawerNowPlaying.innerHTML = nowPlaying.map(function (session) {
+      var title = session && session.title ? String(session.title) : 'Unknown';
+      var user = session && session.user ? String(session.user) : 'Unknown user';
+      var player = session && session.player ? String(session.player) : 'Unknown player';
+      var state = session && session.state ? String(session.state) : 'unknown';
+      var meta = [user, player, state].join(' · ');
+      var progress = renderSessionProgress(session);
+      return (
+        '<li class="drawer-now-playing-item">' +
+          '<div class="drawer-now-playing-title">' + escapeHtml(title) + '</div>' +
+          '<div class="drawer-now-playing-meta">' + escapeHtml(meta) + '</div>' +
+          progress +
+        '</li>'
+      );
+    }).join('');
+  }
+
+  function renderSessionProgress(session) {
+    var offset = session && typeof session.view_offset_ms === 'number' ? session.view_offset_ms : null;
+    var duration = session && typeof session.duration_ms === 'number' ? session.duration_ms : null;
+    if (offset == null || duration == null || duration <= 0) return '';
+
+    var rawPercent = Math.round((offset / duration) * 100);
+    var percent = Math.max(0, Math.min(100, rawPercent));
+    return '<div class="drawer-now-playing-progress">' + escapeHtml(String(percent)) + '%</div>';
   }
 
   function renderDrawerIncidents(incidents) {
@@ -527,6 +581,9 @@
     setDrawerError('');
     if (drawerIncidents) drawerIncidents.innerHTML = '';
     if (drawerIncidentsEmpty) drawerIncidentsEmpty.classList.add('is-hidden');
+    if (drawerNowPlaying) drawerNowPlaying.innerHTML = '';
+    if (drawerNowPlayingEmpty) drawerNowPlayingEmpty.classList.add('is-hidden');
+    if (drawerNowPlayingSection) drawerNowPlayingSection.classList.add('is-hidden');
 
     drawerBackdrop.hidden = false;
     drawerBackdrop.classList.remove('is-hidden');
