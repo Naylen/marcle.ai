@@ -7,7 +7,7 @@ import httpx
 
 GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URL: str = os.getenv("GOOGLE_REDIRECT_URL", "http://localhost:9182/api/ask/auth/callback")
+GOOGLE_REDIRECT_URL: str = os.getenv("GOOGLE_REDIRECT_URL", "")
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -16,11 +16,11 @@ GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo"
 SCOPES = "openid email profile"
 
 
-def get_login_url(state: str) -> str:
+def get_login_url(state: str, redirect_uri: str) -> str:
     """Build the Google OAuth2 authorization URL."""
     params = {
         "client_id": GOOGLE_CLIENT_ID,
-        "redirect_uri": GOOGLE_REDIRECT_URL,
+        "redirect_uri": redirect_uri,
         "response_type": "code",
         "scope": SCOPES,
         "access_type": "offline",
@@ -30,7 +30,7 @@ def get_login_url(state: str) -> str:
     return f"{GOOGLE_AUTH_URL}?{urllib.parse.urlencode(params)}"
 
 
-async def exchange_code(code: str) -> dict:
+async def exchange_code(code: str, redirect_uri: str) -> dict:
     """Exchange authorization code for tokens."""
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(
@@ -39,7 +39,7 @@ async def exchange_code(code: str) -> dict:
                 "code": code,
                 "client_id": GOOGLE_CLIENT_ID,
                 "client_secret": GOOGLE_CLIENT_SECRET,
-                "redirect_uri": GOOGLE_REDIRECT_URL,
+                "redirect_uri": redirect_uri,
                 "grant_type": "authorization_code",
             },
         )

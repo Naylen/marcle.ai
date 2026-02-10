@@ -6,6 +6,7 @@ import logging
 import os
 import secrets
 import time
+import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timezone
 
@@ -19,7 +20,7 @@ from app.ask_db import (
 )
 from app.ask_services.discord import post_question_to_discord
 from app.ask_services.email import send_answer_email
-from app.ask_services.google_oauth import exchange_code, get_login_url, get_user_info
+from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
 
 logger = logging.getLogger("marcle.ask")
 
@@ -28,7 +29,7 @@ router = APIRouter(prefix="/api/ask", tags=["ask"])
 # --- Config ---
 SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production")
 ASK_ANSWER_WEBHOOK_SECRET: str = os.getenv("ASK_ANSWER_WEBHOOK_SECRET", "")
-BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "http://localhost:9182")
+BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
 
 # Rate limiting: per-user, in-memory
 _rate_limit_window: int = 60  # seconds
@@ -39,8 +40,8 @@ _rate_limits: dict[int, list[float]] = defaultdict(list)
 # Maps session_token -> {user_id, google_id, email, name, picture_url, created_at}
 _sessions: dict[str, dict] = {}
 
-# OAuth state tokens (nonce -> timestamp)
-_oauth_states: dict[str, float] = {}
+# OAuth state tokens (nonce -> metadata)
+_oauth_states: dict[str, dict[str, str | float]] = {}
 
 
 # --- Pydantic Models ---
@@ -124,19 +125,59 @@ def _check_rate_limit(user_id: int) -> None:
 def _cleanup_expired_oauth_states() -> None:
     """Remove OAuth state tokens older than 10 minutes."""
     now = time.time()
-    expired = [k for k, v in _oauth_states.items() if now - v > 600]
+    expired = [k for k, v in _oauth_states.items() if now - float(v.get("created_at", 0.0)) > 600]
     for k in expired:
         _oauth_states.pop(k, None)
 
 
+def _normalize_base_url(url: str) -> str:
+    """Normalize a public base URL by trimming path/query/fragment and trailing slash."""
+    candidate = url.strip().rstrip("/")
+    if "://" not in candidate:
+        candidate = f"https://{candidate.lstrip('/')}"
+    parsed = urllib.parse.urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+    return urllib.parse.urlunparse((parsed.scheme, parsed.netloc, "", "", "", "")).rstrip("/")
+
+
+def _get_public_base_url(request: Request) -> str:
+    """Resolve external base URL from config or request headers."""
+    configured = BASE_PUBLIC_URL.strip()
+    if configured:
+        normalized = _normalize_base_url(configured)
+        if normalized:
+            return normalized
+
+    forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+    forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+    scheme = forwarded_proto or request.url.scheme
+    host = forwarded_host or request.headers.get("host", "") or request.url.netloc
+    return _normalize_base_url(f"{scheme}://{host}")
+
+
+def _get_oauth_redirect_uri(request: Request) -> str:
+    """Resolve OAuth callback URI (explicit GOOGLE_REDIRECT_URL wins)."""
+    configured_redirect = GOOGLE_REDIRECT_URL.strip()
+    if configured_redirect:
+        return configured_redirect
+    return f"{_get_public_base_url(request)}/api/ask/auth/callback"
+
+
 # --- Auth Endpoints ---
 @router.get("/auth/login")
-async def auth_login():
+async def auth_login(request: Request):
     """Redirect user to Google OAuth2 login."""
     _cleanup_expired_oauth_states()
     state = secrets.token_urlsafe(32)
-    _oauth_states[state] = time.time()
-    url = get_login_url(state)
+    redirect_uri = _get_oauth_redirect_uri(request)
+    base_public_url = _get_public_base_url(request)
+    _oauth_states[state] = {
+        "created_at": time.time(),
+        "redirect_uri": redirect_uri,
+        "base_public_url": base_public_url,
+    }
+    url = get_login_url(state, redirect_uri)
     return Response(
         status_code=status.HTTP_307_TEMPORARY_REDIRECT,
         headers={"Location": url},
@@ -145,6 +186,7 @@ async def auth_login():
 
 @router.get("/auth/callback")
 async def auth_callback(
+    request: Request,
     code: str = Query(...),
     state: str = Query(...),
 ):
@@ -152,11 +194,13 @@ async def auth_callback(
     # Validate state
     if state not in _oauth_states:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid OAuth state")
-    _oauth_states.pop(state, None)
+    oauth_state = _oauth_states.pop(state, None) or {}
+    redirect_uri = str(oauth_state.get("redirect_uri") or _get_oauth_redirect_uri(request))
+    base_public_url = str(oauth_state.get("base_public_url") or _get_public_base_url(request))
 
     # Exchange code for tokens
     try:
-        token_data = await exchange_code(code)
+        token_data = await exchange_code(code, redirect_uri)
     except Exception:
         logger.exception("Failed to exchange OAuth code")
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="OAuth token exchange failed")
@@ -206,14 +250,14 @@ async def auth_callback(
     # Redirect to /ask with session cookie
     response = Response(
         status_code=status.HTTP_307_TEMPORARY_REDIRECT,
-        headers={"Location": f"{BASE_PUBLIC_URL}/ask"},
+        headers={"Location": f"{base_public_url}/ask"},
     )
     response.set_cookie(
         key="ask_session",
         value=session_token,
         httponly=True,
         samesite="lax",
-        secure=BASE_PUBLIC_URL.startswith("https"),
+        secure=base_public_url.startswith("https"),
         max_age=86400,
         path="/",
     )

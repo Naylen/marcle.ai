@@ -8,7 +8,7 @@ import httpx
 logger = logging.getLogger("marcle.ask.discord")
 
 DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
-BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "http://localhost:9182")
+BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
 
 
 async def post_question_to_discord(
@@ -23,6 +23,12 @@ async def post_question_to_discord(
         logger.warning("DISCORD_WEBHOOK_URL not set; skipping webhook post")
         return False
 
+    answer_endpoint = (
+        f"{BASE_PUBLIC_URL.rstrip('/')}/api/ask/answers"
+        if BASE_PUBLIC_URL.strip()
+        else "/api/ask/answers"
+    )
+
     # Build a rich embed for Discord
     embed = {
         "title": f"New Question #{question_id}",
@@ -36,7 +42,7 @@ async def post_question_to_discord(
                 "value": (
                     "Send a POST to the answer endpoint:\n"
                     "```\n"
-                    f"POST {BASE_PUBLIC_URL}/api/ask/answers\n"
+                    f"POST {answer_endpoint}\n"
                     "Headers: X-Webhook-Secret: <ASK_ANSWER_WEBHOOK_SECRET>\n"
                     "Body: {\"question_id\": " + str(question_id) + ", \"answer_text\": \"Your answer here\"}\n"
                     "```"

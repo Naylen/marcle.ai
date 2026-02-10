@@ -197,6 +197,8 @@ Notes:
 - Missing service URLs or credentials produce `unknown` status, not hard failures.
 - Admin endpoints return `503` when `ADMIN_TOKEN` is unset.
 - OpenAPI/docs are disabled in FastAPI (`docs_url`, `redoc_url`, `openapi_url` are `None`).
+- For Ask OAuth in production, set `BASE_PUBLIC_URL` to your public domain (for example `https://marcle.ai`).
+- `GOOGLE_REDIRECT_URL` is optional; if unset it is derived as `<BASE_PUBLIC_URL>/api/ask/auth/callback`.
 
 ## Local Development (without Docker)
 
