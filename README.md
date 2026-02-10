@@ -1,209 +1,246 @@
 # marcle.ai
 
-Public homelab operations dashboard and **ask.marcle.ai** Q&A app. Self-hosted, no frameworks, zero build step.
+Self-hosted homelab operations stack with two products behind one nginx entrypoint:
 
-## Structure
+- Status dashboard (`/`) for service health, incidents, and operational metadata
+- Ask app (`/ask`) for Google-authenticated questions, Discord notification, and email answers
+
+The stack is intentionally simple: static frontend (HTML/CSS/JS) + FastAPI backend + JSON/SQLite runtime state.
+
+## Architecture
 
 ```
-├── frontend/                Static sites served by nginx
-│   ├── index.html           Status dashboard
-│   ├── admin.html           Admin panel
-│   ├── styles.css           Shared design system
-│   └── ask/                 Ask app (HTML/CSS/JS)
-├── backend/                 FastAPI application
-│   └── app/
-│       ├── main.py          Status API + refresh loop
-│       ├── routers/ask.py   Ask API (auth, questions, answers)
-│       ├── ask_db.py        SQLite schema + connections
-│       └── ask_services/    Google OAuth, Discord webhook, SMTP email
-├── data/                    Runtime state (mounted volume)
-│   ├── services.json        Service definitions
-│   ├── observations.json    Incident tracking
-│   ├── audit.log            Admin audit trail
-│   └── ask.db               Ask app database
-├── docker-compose.yml       Container orchestration
-└── .env.example             All environment variables
+Internet
+  -> Cloudflare Tunnel
+    -> nginx (frontend container, host port 9182)
+      -> /, /admin, /ask/* static pages
+      -> /api/* and /healthz proxied to FastAPI backend (:8000 internal)
 ```
 
-## Quick Start
+## Repository Layout
+
+```
+.
+├── frontend/
+│   ├── index.html           Public status dashboard
+│   ├── admin.html           Admin console
+│   ├── ask/                 Ask app (HTML/CSS/JS)
+│   ├── status.js            Dashboard data + drawer logic
+│   ├── admin.js             Admin API client + forms
+│   └── nginx.conf           Static + proxy routing
+├── backend/
+│   ├── app/main.py          FastAPI app, status loop, admin/status routes
+│   ├── app/routers/ask.py   Ask auth/questions/answers/admin routes
+│   ├── app/ask_services/    Google OAuth, Discord, SMTP integrations
+│   ├── app/config_store.py  Runtime service config (JSON)
+│   ├── app/observations_store.py Incident/flapping persistence (JSON)
+│   ├── app/notifications_store.py Notification endpoints config (JSON)
+│   └── tests/               API and store coverage
+├── data/
+│   ├── services.json        Runtime service definitions (safe to commit)
+│   └── notifications.json   Runtime notification endpoint config (safe to commit)
+├── docker-compose.yml
+├── .env.example
+└── scripts/audit_services.py
+```
+
+## Quick Start (Docker)
 
 ```bash
 cp .env.example .env
-# Fill in values — service URLs, admin token, and Ask app config
+# Fill required values (at minimum ADMIN_TOKEN if using /admin,
+# and Ask OAuth/SMTP/webhook values if using /ask)
 
 docker compose up --build
 ```
 
-| Page | URL |
-|------|-----|
-| Status Dashboard | `http://localhost:9182` |
-| Ask App | `http://localhost:9182/ask` |
-| Admin Panel | `http://localhost:9182/admin` |
-| API | `http://localhost:9182/api/status` |
+Default URLs:
 
-Backend port `8000` is internal-only.
+- Status dashboard: `http://localhost:9182`
+- Ask app: `http://localhost:9182/ask`
+- Admin panel: `http://localhost:9182/admin`
+- Status API: `http://localhost:9182/api/status`
+- Health probe: `http://localhost:9182/healthz`
 
-## Status Dashboard
+Backend port `8000` stays internal by default (not published to host).
 
-Plain HTML + CSS + vanilla JS. No build step.
+## What the Status System Does
 
-The dashboard polls `/api/status` and `/api/overview` every 60 seconds for service tiles, overview widgets, incident banners, and a service detail drawer. Checks run in a background loop every `REFRESH_INTERVAL_SECONDS` (default `30`) with `MAX_CONCURRENCY` (default `10`) concurrent checks.
+- Loads service definitions from `services.json`
+- Runs background checks every `REFRESH_INTERVAL_SECONDS` (default `30`)
+- Stores the latest status payload in memory for fast `/api/status` responses
+- Persists incident transitions and flapping metadata in `observations.json`
+- Computes overview metadata for `/api/overview` (counts, cache age, last incident)
 
-## Ask App
+### Check Types
 
-The Ask app (`/ask`) lets authenticated users submit questions to Marc.
+Built-in `check_type` profiles include:
 
-**How it works:**
-1. User signs in with Google OAuth2.
-2. User submits a question (costs Marcle Points).
-3. Question is posted to a Discord channel via webhook.
-4. Marc answers in Discord, then calls the answer endpoint.
-5. User receives the answer by email.
+- `proxmox`, `unifi-network`, `unifi-protect`, `homeassistant`
+- `plex` (custom integration with now-playing extraction)
+- `arrs`, `radarr`, `sonarr`, `overseerr`, `tautulli`
+- `ollama`, `n8n`, `generic`
 
-**Key features:**
-- Google OAuth2 with CSRF-safe sessions (`SameSite=Lax`, `HttpOnly` cookies)
-- Marcle Points system (configurable starting balance and cost per question)
-- Atomic points decrement with DB-level `CHECK (points >= 0)` constraint
-- Rate limiting (5 questions per user per 60 seconds)
-- Discord webhook with rich embeds and inline answer instructions
-- HTML + plain text email delivery
-- Admin endpoints for user management and points adjustment
+### Auth for Service Checks (`auth_ref`)
 
-**Designed for future integration** with n8n workflows and local LLM answering.
+`services.json` stores only auth metadata, never raw secrets.
 
-### Ask Environment Variables
+Supported schemes:
 
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_CLIENT_ID` | Google OAuth2 client ID |
-| `GOOGLE_CLIENT_SECRET` | Google OAuth2 client secret |
-| `GOOGLE_REDIRECT_URL` | OAuth callback URL (`http://localhost:9182/api/ask/auth/callback`) |
-| `SESSION_SECRET` | Secret for session token generation |
-| `DISCORD_WEBHOOK_URL` | Discord channel webhook for question notifications |
-| `SMTP_HOST` / `PORT` / `USER` / `PASS` / `FROM` | SMTP config for answer emails |
-| `ASK_ANSWER_WEBHOOK_SECRET` | Shared secret for the answer endpoint |
-| `DEFAULT_STARTING_POINTS` | Points given to new users (default `10`) |
-| `POINTS_PER_QUESTION` | Points deducted per question (default `1`) |
-| `BASE_PUBLIC_URL` | Public URL for redirects and Discord messages |
-| `ASK_DB_PATH` | SQLite database path (default `/data/ask.db`) |
+- `none`
+- `bearer` -> `Authorization: Bearer <ENV_VALUE>`
+- `basic` -> `Authorization: Basic base64(user:pass)` where env value is `USER:PASS`
+- `header` -> custom `<header_name>: <ENV_VALUE>`
+- `query_param` -> `?<param_name>=<ENV_VALUE>`
 
-## API Reference
-
-### Public (no auth)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/status` | Current service statuses |
-| `GET` | `/api/overview` | Dashboard metadata (counts, cache age, last incident) |
-| `GET` | `/api/incidents?limit=50` | Recent incident transitions |
-| `GET` | `/api/services/{id}` | Service detail + recent incidents |
-| `GET` | `/healthz` | Health probe |
-
-### Admin (`Authorization: Bearer <ADMIN_TOKEN>`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/admin/services` | List all services with credential flags |
-| `POST` | `/api/admin/services` | Create service |
-| `PUT` | `/api/admin/services/{id}` | Upsert service |
-| `DELETE` | `/api/admin/services/{id}` | Delete service |
-| `POST` | `/api/admin/services/{id}/toggle` | Toggle enabled |
-| `POST` | `/api/admin/services/bulk` | Bulk enable/disable |
-| `GET` | `/api/admin/audit?limit=200` | Audit log |
-| `GET` | `/api/admin/notifications` | Notification config |
-| `PUT` | `/api/admin/notifications` | Update notifications |
-| `POST` | `/api/admin/notifications/test` | Test notifications |
-
-### Ask — User (session cookie via Google OAuth)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/ask/auth/login` | Redirect to Google OAuth |
-| `GET` | `/api/ask/auth/callback` | OAuth callback (sets session cookie) |
-| `POST` | `/api/ask/auth/logout` | Clear session |
-| `GET` | `/api/ask/me` | Current user + points balance |
-| `POST` | `/api/ask/questions` | Submit question (costs points, posts to Discord) |
-| `GET` | `/api/ask/questions` | List user's questions |
-
-### Ask — Answer Webhook (`X-Webhook-Secret` header)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/ask/answers` | Submit answer → marks answered + emails user |
-
-### Ask — Admin (`Authorization: Bearer <ADMIN_TOKEN>`)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/ask/admin/users` | List all users |
-| `POST` | `/api/ask/admin/points` | Adjust user point balance |
-
-## Service Configuration
-
-`services.json` stores non-secret service metadata. Auth is configured via `auth_ref` pointing to environment variable names:
+Example:
 
 ```json
 {
-  "id": "proxmox",
-  "name": "Proxmox",
-  "group": "core",
-  "url": "https://pve.local:8006",
-  "check_type": "proxmox",
+  "id": "tautulli",
+  "name": "Tautulli",
+  "group": "media",
+  "url": "https://tautulli.local",
+  "check_type": "tautulli",
   "enabled": true,
-  "auth_ref": { "scheme": "bearer", "env": "PROXMOX_API_TOKEN" }
+  "auth_ref": {
+    "scheme": "query_param",
+    "env": "TAUTULLI_API_KEY",
+    "param_name": "apikey"
+  }
 }
 ```
 
-**Auth schemes:** `none`, `bearer`, `basic`, `header`, `query_param`
+## What the Ask App Does
 
-Never put secrets in `services.json`. Set values only in `.env` or container environment.
+Flow:
 
-## Status Environment Variables
+1. User signs in via Google OAuth (`/api/ask/auth/login` -> callback)
+2. Ask app creates/updates user in SQLite (`ask.db`) and sets `ask_session` cookie
+3. User submits a question (points are deducted atomically)
+4. Backend sends the question to Discord webhook
+5. Marc/n8n submits answer to `/api/ask/answers` with `X-Webhook-Secret`
+6. Backend stores answer and emails user via SMTP
 
-See `.env.example` for the full list. Key variables:
+Features implemented:
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `ADMIN_TOKEN` | — | Admin API access (required to enable admin endpoints) |
-| `REFRESH_INTERVAL_SECONDS` | `30` | Background check cadence |
-| `REQUEST_TIMEOUT_SECONDS` | `4` | Per-check HTTP timeout |
-| `MAX_CONCURRENCY` | `10` | In-flight checks per cycle |
-| `EXPOSE_SERVICE_URLS` | `false` | Include URLs in public API responses |
-| `FLAP_WINDOW_SECONDS` | `600` | Flapping detection lookback window |
-| `FLAP_THRESHOLD` | `3` | Transitions in window to trigger flapping |
+- Google OAuth2 login
+- In-memory session tokens (24h expiry)
+- Per-user in-memory rate limit (5 questions / 60s)
+- Points system with DB constraint to prevent negative balances
+- Ask admin endpoints for listing users and adjusting points
 
-## Running Locally (without Docker)
+## API Reference
+
+### Public Status Endpoints
+
+- `GET /api/status`
+- `GET /api/overview`
+- `GET /api/incidents?limit=50`
+- `GET /api/services/{id}`
+- `GET /healthz`
+
+### Admin Status Endpoints (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+- `GET /api/admin/services`
+- `POST /api/admin/services`
+- `PUT /api/admin/services/{id}`
+- `DELETE /api/admin/services/{id}`
+- `POST /api/admin/services/{id}/toggle`
+- `POST /api/admin/services/bulk`
+- `GET /api/admin/audit?limit=200`
+- `GET /api/admin/notifications`
+- `PUT /api/admin/notifications`
+- `POST /api/admin/notifications/test`
+
+### Ask User Endpoints (session cookie)
+
+- `GET /api/ask/auth/login`
+- `GET /api/ask/auth/callback`
+- `POST /api/ask/auth/logout`
+- `GET /api/ask/me`
+- `POST /api/ask/questions`
+- `GET /api/ask/questions?limit=20`
+
+### Ask Answer Webhook
+
+- `POST /api/ask/answers`
+- Required header: `X-Webhook-Secret: <ASK_ANSWER_WEBHOOK_SECRET>`
+
+### Ask Admin Endpoints (`Authorization: Bearer <ADMIN_TOKEN>`)
+
+- `GET /api/ask/admin/users`
+- `POST /api/ask/admin/points`
+
+## Runtime Files
+
+These files are created/updated at runtime in `/data` (Docker bind-mounts `./data:/data`):
+
+- `services.json` -> service definitions
+- `notifications.json` -> outbound notification endpoint config
+- `observations.json` -> last status changes, incident history, flapping timestamps
+- `audit.log` -> append-only admin action log (size-capped)
+- `ask.db` -> Ask app SQLite DB (`users`, `questions`)
+
+## Environment Variables
+
+Use `.env.example` as source of truth. Important groups:
+
+- Core status loop: `REFRESH_INTERVAL_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `MAX_CONCURRENCY`
+- Runtime paths: `SERVICES_CONFIG_PATH`, `NOTIFICATIONS_CONFIG_PATH`, `OBSERVATIONS_PATH`, `AUDIT_LOG_PATH`, `ASK_DB_PATH`
+- Security/admin: `ADMIN_TOKEN`, `EXPOSE_SERVICE_URLS`, `CORS_ORIGINS`
+- Flapping/incident behavior: `FLAP_WINDOW_SECONDS`, `FLAP_THRESHOLD`, `OBSERVATIONS_HISTORY_LIMIT`
+- Ask OAuth/session/webhook/mail: `GOOGLE_*`, `SESSION_SECRET`, `ASK_ANSWER_WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `BASE_PUBLIC_URL`
+
+Notes:
+
+- Missing service URLs or credentials produce `unknown` status, not hard failures.
+- Admin endpoints return `503` when `ADMIN_TOKEN` is unset.
+- OpenAPI/docs are disabled in FastAPI (`docs_url`, `redoc_url`, `openapi_url` are `None`).
+
+## Local Development (without Docker)
 
 ```bash
 cd backend
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-### Plex Manual Session Check (developer note)
+Serve frontend with any static server that mirrors nginx routing, or use Docker compose for parity.
 
-Use these commands from within the backend/container environment when debugging Plex now-playing. Do not commit or share token values.
+## Tests
 
 ```bash
-curl "$PLEX_URL/identity?X-Plex-Token=$PLEX_TOKEN"
-curl "$PLEX_URL/status/sessions?X-Plex-Token=$PLEX_TOKEN"
+cd backend
+pytest
 ```
 
-## Deployment
+Current tests cover:
 
-Designed for Cloudflare Tunnel — no inbound ports, TLS handled by the tunnel.
+- Admin auth and runtime config mutations
+- Audit log behavior and limits
+- Auth reference handling (including query-param auth)
+- Status cache behavior and URL exposure controls
+- Observation/incident/flapping derivation
 
+## Utility Script
+
+`scripts/audit_services.py` audits runtime config vs status health.
+
+```bash
+MARCLE_BASE_URL=http://localhost:9182 ADMIN_TOKEN=... python scripts/audit_services.py
 ```
-Internet → Cloudflare Tunnel → nginx (:80 container, :9182 host)
-                                ├── /         → status dashboard
-                                ├── /ask      → ask.marcle.ai
-                                ├── /admin    → admin panel
-                                └── /api/*    → backend (uvicorn :8000)
-```
 
-In production:
-- Keep `/admin` behind Cloudflare Access
-- Always require `Authorization: Bearer <ADMIN_TOKEN>` at the backend
-- Route `ask.marcle.ai` via Cloudflare Tunnel to the same nginx container
-- Generate strong values for `SESSION_SECRET` and `ASK_ANSWER_WEBHOOK_SECRET`
+Note: script default base URL is `http://localhost:9181`; set `MARCLE_BASE_URL` explicitly for this repo's compose defaults.
+
+## Deployment Notes
+
+Recommended production posture:
+
+- Keep `/admin` behind Cloudflare Access (or equivalent)
+- Require strong `ADMIN_TOKEN`
+- Use strong random values for `SESSION_SECRET` and `ASK_ANSWER_WEBHOOK_SECRET`
+- Keep secrets only in environment variables, never in `services.json` or `notifications.json`
+- Route external traffic through Cloudflare Tunnel; do not expose backend directly
