@@ -16,22 +16,44 @@ SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
 
 
-def send_custom_email(
+def _validate_email_config() -> tuple[bool, str | None]:
+    missing: list[str] = []
+    if not SMTP_HOST.strip():
+        missing.append("SMTP_HOST")
+    if not SMTP_USER.strip():
+        missing.append("SMTP_USER")
+    if not SMTP_PASS.strip():
+        missing.append("SMTP_PASS")
+    if not SMTP_FROM.strip():
+        missing.append("SMTP_FROM")
+    if missing:
+        return False, f"Missing SMTP config: {', '.join(missing)}"
+    return True, None
+
+
+def send_custom_email_result(
     *,
     to_email: str,
     subject: str,
     text_body: str,
     html_body: str,
+    question_id: int | None = None,
     log_context: str = "",
-) -> bool:
-    """Send a custom email via SMTP. Returns True on success."""
-    if not SMTP_HOST:
-        logger.warning("SMTP_HOST not set; skipping email send")
-        return False
+) -> tuple[bool, str | None]:
+    """Send a custom email via SMTP and return (ok, error)."""
+    config_ok, config_error = _validate_email_config()
+    if not config_ok:
+        logger.warning(
+            "ask_email_send_skipped recipient=%s question_id=%s reason=%s",
+            to_email,
+            question_id if question_id is not None else "none",
+            config_error,
+        )
+        return False, config_error
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = SMTP_FROM or SMTP_USER
+    msg["From"] = SMTP_FROM
     msg["To"] = to_email
     msg.attach(MIMEText(text_body, "plain"))
     msg.attach(MIMEText(html_body, "html"))
@@ -42,26 +64,52 @@ def send_custom_email(
                 server.ehlo()
                 server.starttls()
                 server.ehlo()
-                if SMTP_USER:
-                    server.login(SMTP_USER, SMTP_PASS)
+                server.login(SMTP_USER, SMTP_PASS)
                 server.send_message(msg)
         else:
             with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                if SMTP_USER:
-                    server.login(SMTP_USER, SMTP_PASS)
+                server.login(SMTP_USER, SMTP_PASS)
                 server.send_message(msg)
 
-        if log_context:
-            logger.info("Email sent to %s (%s)", to_email, log_context)
-        else:
-            logger.info("Email sent to %s", to_email)
-        return True
-    except Exception:
-        if log_context:
-            logger.exception("Failed to send email to %s (%s)", to_email, log_context)
-        else:
-            logger.exception("Failed to send email to %s", to_email)
-        return False
+        logger.info(
+            "ask_email_send_success recipient=%s question_id=%s context=%s",
+            to_email,
+            question_id if question_id is not None else "none",
+            log_context or "none",
+        )
+        return True, None
+    except Exception as exc:
+        error_text = f"{exc.__class__.__name__}: {exc}"
+        logger.exception(
+            "ask_email_send_failure recipient=%s question_id=%s error_type=%s error=%s context=%s",
+            to_email,
+            question_id if question_id is not None else "none",
+            exc.__class__.__name__,
+            str(exc),
+            log_context or "none",
+        )
+        return False, error_text
+
+
+def send_custom_email(
+    *,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    question_id: int | None = None,
+    log_context: str = "",
+) -> bool:
+    """Send a custom email via SMTP. Returns True on success."""
+    ok, _error = send_custom_email_result(
+        to_email=to_email,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        question_id=question_id,
+        log_context=log_context,
+    )
+    return ok
 
 
 def send_answer_email(
@@ -114,5 +162,6 @@ def send_answer_email(
         subject=subject,
         text_body=text_body,
         html_body=html_body,
+        question_id=question_id,
         log_context=f"question_id={question_id}",
     )

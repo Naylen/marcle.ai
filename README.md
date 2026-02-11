@@ -209,6 +209,7 @@ Features implemented:
 
 - `GET /api/ask/admin/users`
 - `POST /api/ask/admin/points`
+- `POST /api/ask/admin/email/test`
 
 ## Runtime Files
 
@@ -242,6 +243,7 @@ Notes:
 - For Ask OAuth in production, set `BASE_PUBLIC_URL` to your public domain (for example `https://marcle.ai`).
 - `GOOGLE_REDIRECT_URL` is optional; if unset it is derived as `<BASE_PUBLIC_URL>/api/ask/auth/callback`.
 - SSE is proxied through nginx with buffering disabled on `/api/ask/questions/*/events`.
+- SMTP auth uses `SMTP_USER`/`SMTP_PASS`, while message sender uses `SMTP_FROM`.
 
 ## Local Development (without Docker)
 

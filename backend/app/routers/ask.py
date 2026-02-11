@@ -24,7 +24,7 @@ from app.ask_db import (
     get_db,
 )
 from app.ask_services.discord import post_question_to_discord
-from app.ask_services.email import send_answer_email, send_custom_email
+from app.ask_services.email import send_answer_email, send_custom_email, send_custom_email_result
 from app.ask_services.llm import generate_local_answer_text, generate_openai_answer_text
 from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
 from app.discord_client import post_answer_to_discord
@@ -1226,6 +1226,7 @@ async def attach_discord_answer(
         subject=subject,
         text_body=text_body,
         html_body=html_body,
+        question_id=int(question_data["id"]),
         log_context=f"discord_question_id={question_data['id']}",
     )
     if not email_ok:
@@ -1340,6 +1341,43 @@ async def admin_adjust_points(body: AdminAdjustPointsRequest, request: Request):
         status_code = status.HTTP_404_NOT_FOUND if "not found" in error.lower() else status.HTTP_400_BAD_REQUEST
         raise HTTPException(status_code=status_code, detail=error)
     return result
+
+
+class AdminEmailTestRequest(BaseModel):
+    to: str = Field(..., min_length=3, max_length=320)
+
+
+@router.post("/admin/email/test")
+async def admin_email_test(body: AdminEmailTestRequest, request: Request):
+    """Send an SMTP test message using current Ask email settings. Requires ADMIN_TOKEN."""
+    _require_admin_token(request)
+
+    subject = "marcle.ai Ask SMTP test"
+    text_body = (
+        "This is a test email from marcle.ai Ask admin endpoint.\n\n"
+        "If you received this, SMTP settings are working."
+    )
+    html_body = """<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;">
+  <p>This is a test email from <strong>marcle.ai Ask admin endpoint</strong>.</p>
+  <p>If you received this, SMTP settings are working.</p>
+</body>
+</html>"""
+
+    ok, error = await asyncio.to_thread(
+        send_custom_email_result,
+        to_email=body.to,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        question_id=None,
+        log_context="admin_email_test",
+    )
+    if ok:
+        return {"ok": True}
+    return {"ok": False, "error": error or "Email send failed"}
 
 
 def _require_admin_token(request: Request) -> None:
