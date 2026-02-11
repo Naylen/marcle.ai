@@ -14,6 +14,7 @@
   const loadingView = document.getElementById("loading-view");
   const loginBtn = document.getElementById("btn-login");
   const logoutBtn = document.getElementById("btn-logout");
+  const navUserSection = document.getElementById("nav-user-section");
   const userAvatar = document.getElementById("user-avatar");
   const userName = document.getElementById("user-name");
   const navPoints = document.getElementById("nav-points");
@@ -29,14 +30,40 @@
   const activeQuestionStreams = new Map();
   let fallbackPollTimer = null;
 
+  function getCookie(name) {
+    const cookieName = `${name}=`;
+    const chunks = document.cookie ? document.cookie.split(";") : [];
+    for (const rawChunk of chunks) {
+      const chunk = rawChunk.trim();
+      if (chunk.startsWith(cookieName)) {
+        return decodeURIComponent(chunk.substring(cookieName.length));
+      }
+    }
+    return "";
+  }
+
+  function isMutatingMethod(method) {
+    const normalized = String(method || "GET").toUpperCase();
+    return !["GET", "HEAD", "OPTIONS", "TRACE"].includes(normalized);
+  }
+
   // --- API Helpers ---
   async function apiFetch(path, options = {}) {
+    const method = String(options.method || "GET").toUpperCase();
+    const csrfToken = isMutatingMethod(method) ? getCookie("ask_csrf") : "";
+    const requestHeaders = {
+      ...(options.headers || {}),
+    };
+    if (isMutatingMethod(method) && csrfToken) {
+      requestHeaders["X-CSRF-Token"] = csrfToken;
+    }
+
     const resp = await fetch(`${API_BASE}${path}`, {
       credentials: "include",
       ...options,
       headers: {
-        "Content-Type": "application/json",
-        ...(options.headers || {}),
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...requestHeaders,
       },
     });
     return resp;
@@ -62,12 +89,20 @@
     loadingView.style.display = "none";
     loginView.style.display = "block";
     appView.style.display = "none";
+    if (navUserSection) {
+      navUserSection.style.display = "none";
+    }
+    questionTextarea.disabled = true;
   }
 
   function showApp() {
     loadingView.style.display = "none";
     loginView.style.display = "none";
     appView.style.display = "block";
+    if (navUserSection) {
+      navUserSection.style.display = "flex";
+    }
+    questionTextarea.disabled = false;
     renderUser();
   }
 

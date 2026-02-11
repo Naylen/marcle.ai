@@ -105,19 +105,5 @@
   </footer>
 
   <script src="/ask/ask.js"></script>
-  <script>
-    // Enable textarea once JS has loaded and user is ready
-    document.addEventListener("DOMContentLoaded", function () {
-      var appView = document.getElementById("app-view");
-      var observer = new MutationObserver(function () {
-        if (appView.style.display !== "none") {
-          document.getElementById("question-text").disabled = false;
-          document.getElementById("nav-user-section").style.display = "flex";
-          observer.disconnect();
-        }
-      });
-      observer.observe(appView, { attributes: true, attributeFilter: ["style"] });
-    });
-  </script>
 </body>
 </html>
