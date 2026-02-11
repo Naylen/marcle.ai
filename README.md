@@ -15,7 +15,16 @@ Internet
     -> nginx (frontend container, host port 9182)
       -> /, /admin, /ask/* static pages
       -> /api/* and /healthz proxied to FastAPI backend (:8000 internal)
+      -> n8n.marcle.ai and hooks.marcle.ai proxied to n8n (:5678 internal)
 ```
+
+## n8n Routing Model
+
+- UI/editor: `https://n8n.marcle.ai` (protect this hostname with Cloudflare Access)
+- Webhooks: `https://hooks.marcle.ai` (do not protect with Access browser login)
+- Both hostnames should be configured in Cloudflare Tunnel to the same origin (`frontend` nginx container).
+
+Reason for two hostnames: UI should require OTP/SSO for humans, while webhook endpoints must remain reachable by external machine clients.
 
 ## Repository Layout
 
@@ -63,6 +72,18 @@ Default URLs:
 - Health probe: `http://localhost:9182/healthz`
 
 Backend port `8000` stays internal by default (not published to host).
+
+For local n8n parity, prefer subdomains with hosts entries:
+
+- `n8n.marcle.ai` -> `127.0.0.1`
+- `hooks.marcle.ai` -> `127.0.0.1`
+
+If you cannot do local DNS/hosts mapping, a temporary fallback is:
+
+- `N8N_HOST=localhost`
+- `N8N_EDITOR_BASE_URL=http://localhost:9182/`
+
+Subdomain-based config is still recommended to match production behavior.
 
 ## What the Status System Does
 
@@ -246,3 +267,5 @@ Recommended production posture:
 - Use strong random values for `SESSION_SECRET` and `ASK_ANSWER_WEBHOOK_SECRET`
 - Keep secrets only in environment variables, never in `services.json` or `notifications.json`
 - Route external traffic through Cloudflare Tunnel; do not expose backend directly
+- Protect `n8n.marcle.ai` with Cloudflare Access (human editor login)
+- Keep `hooks.marcle.ai` outside Access browser login; use n8n auth/secrets plus Cloudflare WAF/rate limits
