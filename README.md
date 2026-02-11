@@ -3,7 +3,7 @@
 Self-hosted homelab operations stack with two products behind one nginx entrypoint:
 
 - Status dashboard (`/`) for service health, incidents, and operational metadata
-- Ask app (`/ask`) for Google-authenticated questions, Discord notification, and email answers
+- Ask app (`/ask`) for Google-authenticated questions, Discord notification, live SSE updates, and fallback answers
 
 The stack is intentionally simple: static frontend (HTML/CSS/JS) + FastAPI backend + JSON/SQLite runtime state.
 
@@ -139,9 +139,17 @@ Flow:
 1. User signs in via Google OAuth (`/api/ask/auth/login` -> callback)
 2. Ask app creates/updates user in SQLite (`ask.db`) and sets `ask_session` cookie
 3. User submits a question (points are deducted atomically)
-4. Backend sends the question to Discord webhook
-5. Marc/n8n submits answer to `/api/ask/answers` with `X-Webhook-Secret`
-6. Backend stores answer and emails user via SMTP
+4. Backend posts the question to Discord and attempts to open a question thread
+5. Ask UI subscribes to SSE (`/api/ask/questions/{id}/events`) for live status/answer updates
+6. If a Discord user with `DISCORD_SUPPORT_ROLE_ID` replies in the thread first, backend stores that human answer
+7. If no answer arrives by `ASK_FALLBACK_SECONDS` (default 300), backend generates an LLM answer and posts it to Discord
+8. SSE pushes `status`/`answer`/`snapshot` events to the user in real time
+
+Session/auth model for Ask user routes:
+
+- In-memory session dict keyed by `ask_session` cookie token
+- Session payload fields: `user_id`, `google_id`, `email`, `name`, `picture_url`, `created_at`
+- No JWT and no `request.state.user` principal model
 
 Features implemented:
 
@@ -149,6 +157,9 @@ Features implemented:
 - In-memory session tokens (24h expiry)
 - Per-user in-memory rate limit (5 questions / 60s)
 - Points system with DB constraint to prevent negative balances
+- SSE stream endpoint for per-question updates
+- Discord role-gated human answer ingestion (thread messages only)
+- LLM fallback answer worker after deadline
 - Ask admin endpoints for listing users and adjusting points
 
 ## API Reference
@@ -182,11 +193,17 @@ Features implemented:
 - `GET /api/ask/me`
 - `POST /api/ask/questions`
 - `GET /api/ask/questions?limit=20`
+- `GET /api/ask/questions/{question_id}/events` (SSE)
 
 ### Ask Answer Webhook
 
 - `POST /api/ask/answers`
 - Required header: `X-Webhook-Secret: <ASK_ANSWER_WEBHOOK_SECRET>`
+
+### Ask n8n Token Endpoints (`X-N8N-TOKEN: <N8N_TOKEN>`)
+
+- `POST /api/ask/discord/question` (Discord -> Ask upsert)
+- `POST /api/ask/discord/answer` (Discord answer attach + email)
 
 ### Ask Admin Endpoints (`Authorization: Bearer <ADMIN_TOKEN>`)
 
@@ -212,6 +229,9 @@ Use `.env.example` as source of truth. Important groups:
 - Security/admin: `ADMIN_TOKEN`, `EXPOSE_SERVICE_URLS`, `CORS_ORIGINS`
 - Flapping/incident behavior: `FLAP_WINDOW_SECONDS`, `FLAP_THRESHOLD`, `OBSERVATIONS_HISTORY_LIMIT`
 - Ask OAuth/session/webhook/mail: `GOOGLE_*`, `SESSION_SECRET`, `ASK_ANSWER_WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `BASE_PUBLIC_URL`
+- Ask Discord + fallback worker: `DISCORD_BOT_TOKEN`, `DISCORD_SUPPORT_ROLE_ID`, `ASK_FALLBACK_SECONDS`
+- Ask n8n integration: `N8N_TOKEN`
+- Ask LLM fallback: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
 
 Notes:
 
@@ -220,6 +240,7 @@ Notes:
 - OpenAPI/docs are disabled in FastAPI (`docs_url`, `redoc_url`, `openapi_url` are `None`).
 - For Ask OAuth in production, set `BASE_PUBLIC_URL` to your public domain (for example `https://marcle.ai`).
 - `GOOGLE_REDIRECT_URL` is optional; if unset it is derived as `<BASE_PUBLIC_URL>/api/ask/auth/callback`.
+- SSE is proxied through nginx with buffering disabled on `/api/ask/questions/*/events`.
 
 ## Local Development (without Docker)
 
@@ -265,7 +286,9 @@ Recommended production posture:
 - Keep `/admin` behind Cloudflare Access (or equivalent)
 - Require strong `ADMIN_TOKEN`
 - Use strong random values for `SESSION_SECRET` and `ASK_ANSWER_WEBHOOK_SECRET`
+- Use strong random values for `N8N_TOKEN`
 - Keep secrets only in environment variables, never in `services.json` or `notifications.json`
 - Route external traffic through Cloudflare Tunnel; do not expose backend directly
+- Keep `DISCORD_BOT_TOKEN` secret and set `DISCORD_SUPPORT_ROLE_ID` to a trusted support role
 - Protect `n8n.marcle.ai` with Cloudflare Access (human editor login)
 - Keep `hooks.marcle.ai` outside Access browser login; use n8n auth/secrets plus Cloudflare WAF/rate limits

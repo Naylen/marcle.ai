@@ -26,6 +26,8 @@
   const costDisplay = document.getElementById("cost-display");
 
   let currentUser = null;
+  const activeQuestionStreams = new Map();
+  let fallbackPollTimer = null;
 
   // --- API Helpers ---
   async function apiFetch(path, options = {}) {
@@ -105,6 +107,14 @@
     } catch {
       // Ignore
     }
+    for (const stream of activeQuestionStreams.values()) {
+      stream.close();
+    }
+    activeQuestionStreams.clear();
+    if (fallbackPollTimer) {
+      clearInterval(fallbackPollTimer);
+      fallbackPollTimer = null;
+    }
     currentUser = null;
     showLogin();
   });
@@ -149,6 +159,7 @@
               : "Discord notification pending."
           }`
         );
+        openQuestionStream(data.question_id);
         loadQuestions();
       } else {
         const err = await resp.json().catch(() => ({}));
@@ -186,9 +197,92 @@
       if (!resp.ok) return;
       const questions = await resp.json();
       renderQuestions(questions);
+      syncQuestionStreams(questions);
     } catch {
       // Silently fail
     }
+  }
+
+  function openQuestionStream(questionId) {
+    if (!questionId || activeQuestionStreams.has(questionId)) return;
+
+    const es = new EventSource(`${API_BASE}/questions/${questionId}/events`);
+
+    es.addEventListener("snapshot", (evt) => {
+      try {
+        const payload = JSON.parse(evt.data);
+        if (payload && payload.answer_text) {
+          showStatus("success", `Answer received for question #${questionId}.`);
+          loadQuestions();
+          closeQuestionStream(questionId);
+          return;
+        }
+        loadQuestions();
+      } catch {
+        // ignore bad event payload
+      }
+    });
+
+    es.addEventListener("status", (evt) => {
+      try {
+        const payload = JSON.parse(evt.data);
+        if (payload && payload.status) {
+          showStatus("success", `Question #${questionId} is ${payload.status}.`);
+        }
+      } catch {
+        // ignore
+      }
+    });
+
+    es.addEventListener("answer", (evt) => {
+      try {
+        JSON.parse(evt.data);
+      } catch {
+        // ignore parse errors and still refresh
+      }
+      showStatus("success", `Answer received for question #${questionId}.`);
+      loadQuestions();
+      closeQuestionStream(questionId);
+    });
+
+    es.onerror = () => {
+      closeQuestionStream(questionId);
+      enablePollingFallback();
+    };
+
+    activeQuestionStreams.set(questionId, es);
+  }
+
+  function closeQuestionStream(questionId) {
+    const es = activeQuestionStreams.get(questionId);
+    if (!es) return;
+    es.close();
+    activeQuestionStreams.delete(questionId);
+  }
+
+  function syncQuestionStreams(questions) {
+    const pendingIds = new Set(
+      (questions || [])
+        .filter((q) => q.status === "pending")
+        .map((q) => q.id)
+    );
+
+    for (const qid of pendingIds) {
+      openQuestionStream(qid);
+    }
+
+    for (const existingId of Array.from(activeQuestionStreams.keys())) {
+      if (!pendingIds.has(existingId)) {
+        closeQuestionStream(existingId);
+      }
+    }
+  }
+
+  function enablePollingFallback() {
+    if (fallbackPollTimer) return;
+    fallbackPollTimer = setInterval(() => {
+      loadQuestions();
+    }, 5000);
   }
 
   function renderQuestions(questions) {

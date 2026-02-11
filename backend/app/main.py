@@ -297,10 +297,15 @@ async def _lifespan(_: FastAPI):
     from app.ask_db import init_db as _ask_init_db
     await asyncio.to_thread(_ask_init_db)
     logger.info("Ask database initialized")
+    from app.routers.ask import start_ask_background_workers as _start_ask_workers
+    await _start_ask_workers()
+    logger.info("Ask background workers started")
     refresh_task = asyncio.create_task(_refresh_loop(), name="status-refresh-loop")
     try:
         yield
     finally:
+        from app.routers.ask import stop_ask_background_workers as _stop_ask_workers
+        await _stop_ask_workers()
         refresh_task.cancel()
         with suppress(asyncio.CancelledError):
             await refresh_task
@@ -321,7 +326,7 @@ if config.CORS_ORIGINS:
         CORSMiddleware,
         allow_origins=config.CORS_ORIGINS,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "X-Webhook-Secret"],
+        allow_headers=["Authorization", "Content-Type", "X-Webhook-Secret", "X-N8N-TOKEN"],
     )
 
 # --- Include Ask router ---

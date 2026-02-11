@@ -3,15 +3,18 @@
 import asyncio
 import html
 import hmac
+import json
 import logging
 import os
 import secrets
 import time
 import urllib.parse
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from app.ask_db import (
@@ -21,7 +24,9 @@ from app.ask_db import (
 )
 from app.ask_services.discord import post_question_to_discord
 from app.ask_services.email import send_answer_email, send_custom_email
+from app.ask_services.llm import generate_answer_text
 from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
+from app.discord_client import post_answer_to_discord
 
 logger = logging.getLogger("marcle.ask")
 
@@ -31,6 +36,8 @@ router = APIRouter(prefix="/api/ask", tags=["ask"])
 SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production")
 ASK_ANSWER_WEBHOOK_SECRET: str = os.getenv("ASK_ANSWER_WEBHOOK_SECRET", "")
 BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
+ASK_FALLBACK_SECONDS: int = int(os.getenv("ASK_FALLBACK_SECONDS", "300"))
+ASK_FALLBACK_SWEEP_SECONDS: int = int(os.getenv("ASK_FALLBACK_SWEEP_SECONDS", "10"))
 
 # Rate limiting: per-user, in-memory
 _rate_limit_window: int = 60  # seconds
@@ -44,6 +51,14 @@ _sessions: dict[str, dict] = {}
 # OAuth state tokens (nonce -> metadata)
 _oauth_states: dict[str, dict[str, str | float]] = {}
 
+# SSE subscribers by question_id
+_sse_subscribers: dict[int, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
+_sse_lock = asyncio.Lock()
+
+# Ask background loop task
+_ask_fallback_task: asyncio.Task | None = None
+_llm_inflight_question_ids: set[int] = set()
+
 
 # --- Pydantic Models ---
 class QuestionRequest(BaseModel):
@@ -56,20 +71,39 @@ class AnswerRequest(BaseModel):
 
 
 class DiscordQuestionRequest(BaseModel):
+    guild_id: str | None = Field(default=None, max_length=64)
+    channel_id: str | None = Field(default=None, max_length=64)
+    message_id: str | None = Field(default=None, min_length=1, max_length=64)
+    thread_id: str | None = Field(default=None, max_length=64)
     discord_guild_id: str | None = Field(default=None, max_length=64)
     discord_channel_id: str | None = Field(default=None, max_length=64)
-    discord_message_id: str = Field(..., min_length=1, max_length=64)
+    discord_message_id: str | None = Field(default=None, min_length=1, max_length=64)
     discord_thread_id: str | None = Field(default=None, max_length=64)
     author_id: str | None = Field(default=None, max_length=128)
     author_name: str | None = Field(default=None, max_length=255)
     author_email: str | None = Field(default=None, max_length=320)
     content: str = Field(..., min_length=1, max_length=10000)
+    timestamp: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def _normalize_aliases(self):
+        self.discord_guild_id = (self.discord_guild_id or self.guild_id or "").strip() or None
+        self.discord_channel_id = (self.discord_channel_id or self.channel_id or "").strip() or None
+        self.discord_thread_id = (self.discord_thread_id or self.thread_id or "").strip() or None
+        self.discord_message_id = (self.discord_message_id or self.message_id or "").strip() or None
+        if not self.discord_message_id:
+            raise ValueError("discord_message_id (or message_id) is required")
+        return self
 
 
 class DiscordAnswerRequest(BaseModel):
+    content: str | None = Field(default=None, min_length=1, max_length=10000)
+    answer_message_id: str | None = Field(default=None, max_length=64)
+    guild_id: str | None = Field(default=None, max_length=64)
+    channel_id: str | None = Field(default=None, max_length=64)
     reply_to_message_id: str | None = Field(default=None, max_length=64)
     thread_id: str | None = Field(default=None, max_length=64)
-    answer_text: str = Field(..., min_length=1, max_length=10000)
+    answer_text: str | None = Field(default=None, min_length=1, max_length=10000)
     discord_answer_message_id: str | None = Field(default=None, max_length=64)
     discord_guild_id: str | None = Field(default=None, max_length=64)
     discord_channel_id: str | None = Field(default=None, max_length=64)
@@ -79,6 +113,12 @@ class DiscordAnswerRequest(BaseModel):
 
     @model_validator(mode="after")
     def _validate_lookup_fields(self):
+        self.answer_text = (self.answer_text or self.content or "").strip() or None
+        if not self.answer_text:
+            raise ValueError("answer_text (or content) is required")
+        self.discord_answer_message_id = (self.discord_answer_message_id or self.answer_message_id or "").strip() or None
+        self.discord_guild_id = (self.discord_guild_id or self.guild_id or "").strip() or None
+        self.discord_channel_id = (self.discord_channel_id or self.channel_id or "").strip() or None
         reply_to = (self.reply_to_message_id or "").strip()
         thread_id = (self.thread_id or "").strip()
         if not (reply_to or thread_id):
@@ -135,12 +175,118 @@ def _get_session(token: str | None) -> dict | None:
     return session
 
 
-def _require_session(ask_session: str | None) -> dict:
+def _require_session(ask_session: str | None = None, request: Request | None = None) -> dict:
     """Validate session or raise 401."""
-    session = _get_session(ask_session)
+    token = ask_session
+    if token is None and request is not None:
+        token = request.cookies.get("ask_session")
+    session = _get_session(token)
     if session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return session
+
+
+def _public_question_status(question_row: dict[str, Any]) -> str:
+    """Map internal question row to stable public status."""
+    return "answered" if question_row.get("answer_text") else "pending"
+
+
+def _serialize_question_snapshot(question_row: dict[str, Any]) -> dict[str, Any]:
+    """Return a normalized snapshot payload for SSE."""
+    has_answer = bool(question_row.get("answer_text"))
+    return {
+        "id": question_row["id"],
+        "status": _public_question_status(question_row),
+        "question_text": question_row.get("question_text"),
+        "answer_text": question_row.get("answer_text"),
+        "created_at": question_row.get("created_at"),
+        "answered_at": question_row.get("answered_at"),
+        "deadline_at": question_row.get("deadline_at"),
+        "answered_by": question_row.get("answered_by") if has_answer else None,
+    }
+
+
+def _sse_event(event: str, payload: dict[str, Any]) -> str:
+    return f"event: {event}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+
+
+async def _subscribe_question(question_id: int) -> asyncio.Queue[dict[str, Any]]:
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    async with _sse_lock:
+        _sse_subscribers[question_id].add(queue)
+    return queue
+
+
+async def _unsubscribe_question(question_id: int, queue: asyncio.Queue[dict[str, Any]]) -> None:
+    async with _sse_lock:
+        subscribers = _sse_subscribers.get(question_id)
+        if not subscribers:
+            return
+        subscribers.discard(queue)
+        if not subscribers:
+            _sse_subscribers.pop(question_id, None)
+
+
+async def _publish_question_event(question_id: int, event_name: str, payload: dict[str, Any]) -> None:
+    async with _sse_lock:
+        subscribers = list(_sse_subscribers.get(question_id, set()))
+    if not subscribers:
+        return
+    message = {"event": event_name, "payload": payload}
+    for queue in subscribers:
+        queue.put_nowait(message)
+
+
+def _fetch_question_for_user_sync(question_id: int, user_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM questions WHERE id = ? AND user_id = ?",
+            (question_id, user_id),
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def _fetch_question_by_id_sync(question_id: int) -> dict[str, Any] | None:
+    with get_db() as conn:
+        row = conn.execute("SELECT * FROM questions WHERE id = ?", (question_id,)).fetchone()
+        return dict(row) if row else None
+
+
+async def _publish_snapshot(question_id: int) -> None:
+    row = await asyncio.to_thread(_fetch_question_by_id_sync, question_id)
+    if not row:
+        return
+    await _publish_question_event(question_id, "snapshot", _serialize_question_snapshot(row))
+
+
+async def _publish_status(question_id: int) -> None:
+    row = await asyncio.to_thread(_fetch_question_by_id_sync, question_id)
+    if not row:
+        return
+    await _publish_question_event(
+        question_id,
+        "status",
+        {
+            "status": _public_question_status(row),
+            "deadline_at": row.get("deadline_at"),
+        },
+    )
+
+
+async def _publish_answer(question_id: int) -> None:
+    row = await asyncio.to_thread(_fetch_question_by_id_sync, question_id)
+    if not row or not row.get("answer_text"):
+        return
+    await _publish_question_event(
+        question_id,
+        "answer",
+        {
+            "answer_text": row.get("answer_text"),
+            "answered_at": row.get("answered_at"),
+            "answered_by": row.get("answered_by"),
+            "status": "answered",
+        },
+    )
 
 
 def _check_rate_limit(user_id: int) -> None:
@@ -292,6 +438,165 @@ def _build_discord_answer_email(
 </body>
 </html>"""
     return subject, text_body, html_body
+
+
+async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
+    """Accept role-gated Discord human answer from bot listener."""
+    thread_id = (payload.get("thread_id") or "").strip()
+    if not thread_id:
+        return
+    answer_text = (payload.get("content") or "").strip()
+    if not answer_text:
+        return
+
+    def _apply_human_answer():
+        with get_db() as conn:
+            question = conn.execute(
+                "SELECT * FROM questions WHERE discord_thread_id = ? ORDER BY id DESC LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            if not question or question["answer_text"]:
+                return None
+
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "UPDATE questions SET answer_text = ?, answered_at = ?, answered_by = 'human', status = 'answered', "
+                "discord_answer_message_id = ?, "
+                "discord_guild_id = COALESCE(?, discord_guild_id), "
+                "discord_channel_id = COALESCE(?, discord_channel_id) "
+                "WHERE id = ? AND answer_text IS NULL",
+                (
+                    answer_text,
+                    now,
+                    payload.get("message_id"),
+                    payload.get("guild_id"),
+                    payload.get("channel_id"),
+                    question["id"],
+                ),
+            )
+            if conn.execute("SELECT changes()").fetchone()[0] == 0:
+                conn.rollback()
+                return None
+            conn.commit()
+            return question["id"]
+
+    question_id = await asyncio.to_thread(_apply_human_answer)
+    if question_id is None:
+        return
+    await _publish_answer(question_id)
+    await _publish_snapshot(question_id)
+
+
+async def _process_fallback_candidates_once() -> None:
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    def _fetch_candidates():
+        with get_db() as conn:
+            rows = conn.execute(
+                "SELECT id, question_text, discord_thread_id, discord_channel_id, discord_message_id "
+                "FROM questions "
+                "WHERE answer_text IS NULL "
+                "  AND deadline_at IS NOT NULL "
+                "  AND datetime(deadline_at) <= datetime(?) "
+                "  AND status = 'pending' "
+                "ORDER BY deadline_at ASC "
+                "LIMIT 25",
+                (now_iso,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    candidates = await asyncio.to_thread(_fetch_candidates)
+    for candidate in candidates:
+        question_id = int(candidate["id"])
+        if question_id in _llm_inflight_question_ids:
+            continue
+        _llm_inflight_question_ids.add(question_id)
+        try:
+            def _claim():
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE questions "
+                        "SET answered_by = 'llm' "
+                        "WHERE id = ? AND answer_text IS NULL AND (answered_by IS NULL OR answered_by = 'llm')",
+                        (question_id,),
+                    )
+                    changed = conn.execute("SELECT changes()").fetchone()[0]
+                    conn.commit()
+                    return changed > 0
+
+            claimed = await asyncio.to_thread(_claim)
+            if not claimed:
+                continue
+
+            llm_answer = await generate_answer_text(candidate["question_text"])
+            answered_at = datetime.now(timezone.utc).isoformat()
+
+            def _save_answer():
+                with get_db() as conn:
+                    conn.execute(
+                        "UPDATE questions "
+                        "SET answer_text = ?, answered_at = ?, answered_by = 'llm', status = 'answered' "
+                        "WHERE id = ? AND answer_text IS NULL AND answered_by = 'llm'",
+                        (llm_answer, answered_at, question_id),
+                    )
+                    changed = conn.execute("SELECT changes()").fetchone()[0]
+                    conn.commit()
+                    return changed > 0
+
+            stored = await asyncio.to_thread(_save_answer)
+            if not stored:
+                continue
+
+            await post_answer_to_discord(
+                answer_text=llm_answer,
+                thread_id=candidate.get("discord_thread_id"),
+                channel_id=candidate.get("discord_channel_id"),
+                reply_to_message_id=candidate.get("discord_message_id"),
+            )
+            await _publish_answer(question_id)
+            await _publish_snapshot(question_id)
+        except Exception:
+            logger.exception("Failed processing Ask LLM fallback for question_id=%s", question_id)
+        finally:
+            _llm_inflight_question_ids.discard(question_id)
+
+
+async def _ask_fallback_loop() -> None:
+    while True:
+        try:
+            await _process_fallback_candidates_once()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Ask fallback loop failed")
+        await asyncio.sleep(max(ASK_FALLBACK_SWEEP_SECONDS, 1))
+
+
+async def start_ask_background_workers() -> None:
+    """Start Ask fallback loop + Discord human-answer listener."""
+    global _ask_fallback_task
+    if _ask_fallback_task is None or _ask_fallback_task.done():
+        _ask_fallback_task = asyncio.create_task(_ask_fallback_loop(), name="ask-fallback-loop")
+
+    from app.discord_client import start_discord_client
+
+    await start_discord_client(_handle_discord_human_answer)
+
+
+async def stop_ask_background_workers() -> None:
+    """Stop Ask fallback loop + Discord human-answer listener."""
+    global _ask_fallback_task
+    if _ask_fallback_task is not None:
+        _ask_fallback_task.cancel()
+        try:
+            await _ask_fallback_task
+        except asyncio.CancelledError:
+            pass
+        _ask_fallback_task = None
+
+    from app.discord_client import stop_discord_client
+
+    await stop_discord_client()
 
 
 # --- Auth Endpoints ---
@@ -460,9 +765,12 @@ async def submit_question(
                 conn.rollback()
                 return None, "Insufficient points (race)"
 
+            created_at = datetime.now(timezone.utc)
+            deadline_at = created_at + timedelta(seconds=max(ASK_FALLBACK_SECONDS, 1))
             cursor = conn.execute(
-                "INSERT INTO questions (user_id, question_text, points_spent) VALUES (?, ?, ?)",
-                (user_id, body.question_text, POINTS_PER_QUESTION),
+                "INSERT INTO questions (user_id, question_text, points_spent, status, created_at, deadline_at) "
+                "VALUES (?, ?, ?, 'pending', ?, ?)",
+                (user_id, body.question_text, POINTS_PER_QUESTION, created_at.isoformat(), deadline_at.isoformat()),
             )
             conn.commit()
 
@@ -473,6 +781,7 @@ async def submit_question(
                 "user_name": user["name"],
                 "user_email": user["email"],
                 "remaining_points": remaining_points,
+                "deadline_at": deadline_at.isoformat(),
             }, None
 
     result, error = await asyncio.to_thread(_create_question)
@@ -482,26 +791,44 @@ async def submit_question(
         raise HTTPException(status_code=status.HTTP_402_PAYMENT_REQUIRED, detail=error)
 
     # Post to Discord (best-effort, don't fail the request)
-    discord_ok = await post_question_to_discord(
+    discord_result = await post_question_to_discord(
         question_id=result["question_id"],
         user_name=result["user_name"],
         user_email=result["user_email"],
         question_text=body.question_text,
     )
 
-    # Update discord_sent flag
-    if discord_ok:
-        def _mark_discord():
-            with get_db() as conn:
-                conn.execute("UPDATE questions SET discord_sent = 1 WHERE id = ?", (result["question_id"],))
-                conn.commit()
-        await asyncio.to_thread(_mark_discord)
+    # Update Discord metadata (best effort)
+    def _mark_discord():
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE questions "
+                "SET discord_sent = ?, "
+                "discord_guild_id = COALESCE(?, discord_guild_id), "
+                "discord_channel_id = COALESCE(?, discord_channel_id), "
+                "discord_message_id = COALESCE(?, discord_message_id), "
+                "discord_thread_id = COALESCE(?, discord_thread_id) "
+                "WHERE id = ?",
+                (
+                    1 if discord_result.delivered else 0,
+                    discord_result.guild_id,
+                    discord_result.channel_id,
+                    discord_result.message_id,
+                    discord_result.thread_id,
+                    result["question_id"],
+                ),
+            )
+            conn.commit()
+
+    await asyncio.to_thread(_mark_discord)
+    await _publish_status(result["question_id"])
+    await _publish_snapshot(result["question_id"])
 
     return {
         "question_id": result["question_id"],
         "points_spent": POINTS_PER_QUESTION,
         "remaining_points": result["remaining_points"],
-        "discord_notified": discord_ok,
+        "discord_notified": discord_result.delivered,
     }
 
 
@@ -529,12 +856,50 @@ async def list_questions(
             question_text=q["question_text"],
             answer_text=q["answer_text"],
             points_spent=q["points_spent"],
-            status=q["status"],
+            status=_public_question_status(q),
             created_at=q["created_at"],
             answered_at=q["answered_at"],
         )
         for q in questions
     ]
+
+
+@router.get("/questions/{question_id}/events")
+async def question_events_stream(question_id: int, request: Request):
+    """Stream live Ask updates for one question via SSE."""
+    session = _require_session(request=request)
+    user_id = int(session["user_id"])
+
+    question = await asyncio.to_thread(_fetch_question_for_user_sync, question_id, user_id)
+    if question is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
+
+    async def _event_stream() -> AsyncIterator[str]:
+        queue = await _subscribe_question(question_id)
+        try:
+            current = await asyncio.to_thread(_fetch_question_for_user_sync, question_id, user_id)
+            if current is not None:
+                yield _sse_event("snapshot", _serialize_question_snapshot(current))
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                    yield _sse_event(event["event"], event["payload"])
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            await _unsubscribe_question(question_id, queue)
+
+    return StreamingResponse(
+        _event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post("/discord/question")
@@ -547,6 +912,7 @@ async def upsert_discord_question(
     def _upsert():
         with get_db() as conn:
             now = datetime.now(timezone.utc).isoformat()
+            deadline_at = (datetime.now(timezone.utc) + timedelta(seconds=max(ASK_FALLBACK_SECONDS, 1))).isoformat()
             author_id = (body.author_id or "").strip() or "unknown"
             author_name = (body.author_name or f"Discord User {author_id}").strip()[:255]
             author_email = (body.author_email or _discord_placeholder_email(author_id)).strip()[:320]
@@ -575,13 +941,18 @@ async def upsert_discord_question(
             ).fetchone()
             if existing:
                 conn.execute(
-                    "UPDATE questions SET user_id = ?, question_text = ?, discord_guild_id = ?, discord_channel_id = ?, discord_thread_id = ? WHERE id = ?",
+                    "UPDATE questions "
+                    "SET user_id = ?, question_text = ?, discord_guild_id = ?, discord_channel_id = ?, discord_thread_id = ?, "
+                    "status = CASE WHEN answer_text IS NULL THEN 'pending' ELSE status END, "
+                    "deadline_at = CASE WHEN answer_text IS NULL THEN COALESCE(deadline_at, ?) ELSE deadline_at END "
+                    "WHERE id = ?",
                     (
                         user_id,
                         body.content,
                         body.discord_guild_id,
                         body.discord_channel_id,
                         body.discord_thread_id,
+                        deadline_at,
                         existing["id"],
                     ),
                 )
@@ -589,8 +960,8 @@ async def upsert_discord_question(
                 return existing["id"], "updated"
 
             cursor = conn.execute(
-                "INSERT INTO questions (user_id, question_text, points_spent, status, discord_sent, discord_guild_id, discord_channel_id, discord_message_id, discord_thread_id) "
-                "VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, ?)",
+                "INSERT INTO questions (user_id, question_text, points_spent, status, discord_sent, discord_guild_id, discord_channel_id, discord_message_id, discord_thread_id, deadline_at) "
+                "VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     body.content,
@@ -599,12 +970,15 @@ async def upsert_discord_question(
                     body.discord_channel_id,
                     body.discord_message_id,
                     body.discord_thread_id,
+                    deadline_at,
                 ),
             )
             conn.commit()
             return cursor.lastrowid, "created"
 
     question_id, result = await asyncio.to_thread(_upsert)
+    await _publish_status(question_id)
+    await _publish_snapshot(question_id)
     return {
         "question_id": question_id,
         "status": result,
@@ -637,7 +1011,7 @@ async def attach_discord_answer(
 
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
-                "UPDATE questions SET answer_text = ?, answered_at = ?, status = 'answered', "
+                "UPDATE questions SET answer_text = ?, answered_at = ?, status = 'answered', answered_by = 'human', "
                 "discord_answer_message_id = ?, "
                 "discord_thread_id = COALESCE(?, discord_thread_id), "
                 "discord_guild_id = COALESCE(?, discord_guild_id), "
@@ -663,7 +1037,7 @@ async def attach_discord_answer(
     subject, text_body, html_body = _build_discord_answer_email(
         to_name=question_data["name"] or "there",
         question_text=question_data["question_text"],
-        answer_text=body.answer_text,
+        answer_text=body.answer_text or "",
         question_permalink=body.question_permalink,
         thread_permalink=body.thread_permalink,
         answer_permalink=body.answer_permalink,
@@ -678,6 +1052,9 @@ async def attach_discord_answer(
     )
     if not email_ok:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send answer email")
+
+    await _publish_answer(int(question_data["id"]))
+    await _publish_snapshot(int(question_data["id"]))
 
     return {
         "question_id": question_data["id"],
@@ -707,7 +1084,7 @@ async def submit_answer(body: AnswerRequest, request: Request):
 
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
-                "UPDATE questions SET answer_text = ?, status = 'answered', answered_at = ? WHERE id = ?",
+                "UPDATE questions SET answer_text = ?, status = 'answered', answered_at = ?, answered_by = 'human' WHERE id = ?",
                 (body.answer_text, now, body.question_id),
             )
             conn.commit()
@@ -726,6 +1103,9 @@ async def submit_answer(body: AnswerRequest, request: Request):
         answer_text=body.answer_text,
         question_id=body.question_id,
     )
+
+    await _publish_answer(body.question_id)
+    await _publish_snapshot(body.question_id)
 
     return {
         "question_id": body.question_id,
