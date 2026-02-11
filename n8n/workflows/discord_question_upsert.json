@@ -1,0 +1,137 @@
+{
+  "id": "wf_discord_question_upsert",
+  "name": "Discord \u2192 Ask: Upsert Question",
+  "active": false,
+  "nodes": [
+    {
+      "id": "node_schedule_question_poll",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node_discord_get_many_questions",
+      "name": "Discord: Get Many Messages",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "getMany",
+        "channelId": "={{$env.DISCORD_QUESTIONS_CHANNEL_ID}}",
+        "returnAll": false,
+        "limit": 25
+      },
+      "credentials": {
+        "discordApi": {
+          "id": "DISCORD_CREDENTIAL_ID",
+          "name": "Discord account"
+        }
+      }
+    },
+    {
+      "id": "node_code_filter_new_questions",
+      "name": "Code: Filter New + Non-bot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const data = getWorkflowStaticData('global');\nconst channelId = String($env.DISCORD_QUESTIONS_CHANNEL_ID || '');\nconst key = `lastSeen:${channelId}`;\nconst lastSeen = data[key] ? String(data[key]) : null;\n\nconst inputItems = $input.all();\nconst normalized = inputItems\n  .map((item) => {\n    const msg = item.json || {};\n    const author = msg.author || msg.user || {};\n    return {\n      id: msg.id ? String(msg.id) : (msg.message_id ? String(msg.message_id) : ''),\n      content: typeof msg.content === 'string' ? msg.content : '',\n      author_bot: Boolean(author.bot),\n      author_id: author.id ? String(author.id) : '',\n      author_name: author.username || author.name || '',\n      timestamp: msg.timestamp || msg.createdTimestamp || new Date().toISOString(),\n      channel_id: msg.channel_id || msg.channelId || (msg.channel && msg.channel.id) || channelId,\n      thread_id: msg.thread_id || msg.threadId || (msg.channel && (msg.channel.parent_id || msg.channel.parentId)) || '',\n    };\n  })\n  .filter((m) => m.id);\n\nif (normalized.length === 0) {\n  return [];\n}\n\nconst newestSeenId = normalized[0].id;\nconst nonBot = normalized.filter((m) => !m.author_bot);\n\nconst candidates = [];\nfor (const msg of nonBot) {\n  if (lastSeen && msg.id === lastSeen) {\n    break;\n  }\n  candidates.push(msg);\n}\n\nlet toEmit = candidates;\nif (!lastSeen) {\n  toEmit = candidates.length > 0 ? [candidates[0]] : [];\n}\n\ntoEmit = toEmit.reverse();\n\nif (newestSeenId) {\n  data[key] = newestSeenId;\n}\n\nreturn toEmit.map((m) => ({\n  json: {\n    id: m.id,\n    content: m.content,\n    author_id: m.author_id,\n    author_name: m.author_name,\n    timestamp: m.timestamp,\n    channel_id: m.channel_id,\n    thread_id: m.thread_id,\n  },\n}));"
+      }
+    },
+    {
+      "id": "node_http_post_question",
+      "name": "HTTP: POST /api/ask/discord/question",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        960,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_BASE_URL + '/api/ask/discord/question'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-TOKEN",
+              "value": "={{$env.N8N_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ guild_id: $env.DISCORD_GUILD_ID, channel_id: $json.channel_id || $env.DISCORD_QUESTIONS_CHANNEL_ID, thread_id: $json.thread_id || '', message_id: $json.id, author_id: $json.author_id, author_name: $json.author_name, content: $json.content, timestamp: $json.timestamp }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Discord: Get Many Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord: Get Many Messages": {
+      "main": [
+        [
+          {
+            "node": "Code: Filter New + Non-bot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Filter New + Non-bot": {
+      "main": [
+        [
+          {
+            "node": "HTTP: POST /api/ask/discord/question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "versionId": "v2-discord-question-upsert-polling",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

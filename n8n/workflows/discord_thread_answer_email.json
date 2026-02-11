@@ -1,0 +1,162 @@
+{
+  "id": "wf_discord_thread_answer_email",
+  "name": "Discord \u2192 Ask: Thread Reply \u2192 Save Answer \u2192 Email",
+  "active": false,
+  "nodes": [
+    {
+      "id": "node_schedule_thread_poll",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        220,
+        340
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "node_code_expand_thread_ids",
+      "name": "Code: Expand Thread Channel IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        460,
+        340
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const raw = String($env.DISCORD_THREAD_CHANNEL_IDS || '');\nconst ids = [...new Set(raw.split(',').map((v) => v.trim()).filter(Boolean))];\nreturn ids.map((threadId) => ({ json: { thread_channel_id: threadId } }));"
+      }
+    },
+    {
+      "id": "node_discord_get_many_thread_messages",
+      "name": "Discord: Get Many Thread Messages",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [
+        700,
+        340
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "getMany",
+        "channelId": "={{$json.thread_channel_id}}",
+        "returnAll": false,
+        "limit": 25
+      },
+      "credentials": {
+        "discordApi": {
+          "id": "DISCORD_CREDENTIAL_ID",
+          "name": "Discord account"
+        }
+      }
+    },
+    {
+      "id": "node_code_filter_new_thread_answers",
+      "name": "Code: Filter New + Non-bot per Thread",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        960,
+        340
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const data = getWorkflowStaticData('global');\nconst inputItems = $input.all();\nconst grouped = new Map();\n\nfor (const item of inputItems) {\n  const msg = item.json || {};\n  const author = msg.author || msg.user || {};\n  const threadId = String(msg.thread_channel_id || msg.channel_id || msg.channelId || (msg.channel && msg.channel.id) || '');\n  const messageId = msg.id ? String(msg.id) : (msg.message_id ? String(msg.message_id) : '');\n\n  if (!threadId || !messageId) {\n    continue;\n  }\n\n  const normalized = {\n    thread_id: threadId,\n    channel_id: threadId,\n    answer_message_id: messageId,\n    reply_to_message_id: msg.message_reference?.message_id || msg.reference?.messageId || '',\n    author_bot: Boolean(author.bot),\n    author_id: author.id ? String(author.id) : '',\n    author_name: author.username || author.name || '',\n    content: typeof msg.content === 'string' ? msg.content : '',\n    timestamp: msg.timestamp || msg.createdTimestamp || new Date().toISOString(),\n  };\n\n  if (!grouped.has(threadId)) {\n    grouped.set(threadId, []);\n  }\n  grouped.get(threadId).push(normalized);\n}\n\nconst output = [];\n\nfor (const [threadId, messages] of grouped.entries()) {\n  if (messages.length === 0) {\n    continue;\n  }\n\n  const key = `lastSeenThread:${threadId}`;\n  const lastSeen = data[key] ? String(data[key]) : null;\n  const newestSeenId = messages[0].answer_message_id;\n  const nonBot = messages.filter((m) => !m.author_bot);\n\n  const candidates = [];\n  for (const msg of nonBot) {\n    if (lastSeen && msg.answer_message_id === lastSeen) {\n      break;\n    }\n    candidates.push(msg);\n  }\n\n  let toEmit = candidates;\n  if (!lastSeen) {\n    toEmit = candidates.length > 0 ? [candidates[0]] : [];\n  }\n\n  toEmit = toEmit.reverse();\n\n  for (const msg of toEmit) {\n    output.push({\n      json: {\n        thread_id: msg.thread_id,\n        channel_id: msg.channel_id,\n        answer_message_id: msg.answer_message_id,\n        reply_to_message_id: msg.reply_to_message_id || '',\n        author_id: msg.author_id,\n        author_name: msg.author_name,\n        content: msg.content,\n        timestamp: msg.timestamp,\n      },\n    });\n  }\n\n  if (newestSeenId) {\n    data[key] = newestSeenId;\n  }\n}\n\nreturn output;"
+      }
+    },
+    {
+      "id": "node_http_post_thread_answer",
+      "name": "HTTP: POST /api/ask/discord/answer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        340
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{$env.BACKEND_BASE_URL + '/api/ask/discord/answer'}}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-N8N-TOKEN",
+              "value": "={{$env.N8N_TOKEN}}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ ({ guild_id: $env.DISCORD_GUILD_ID, channel_id: $json.channel_id, thread_id: $json.thread_id, answer_message_id: $json.answer_message_id, reply_to_message_id: $json.reply_to_message_id, content: $json.content, author_id: $json.author_id, author_name: $json.author_name, timestamp: $json.timestamp }) }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Code: Expand Thread Channel IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Expand Thread Channel IDs": {
+      "main": [
+        [
+          {
+            "node": "Discord: Get Many Thread Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discord: Get Many Thread Messages": {
+      "main": [
+        [
+          {
+            "node": "Code: Filter New + Non-bot per Thread",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code: Filter New + Non-bot per Thread": {
+      "main": [
+        [
+          {
+            "node": "HTTP: POST /api/ask/discord/answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "versionId": "v2-discord-thread-answer-email-polling",
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

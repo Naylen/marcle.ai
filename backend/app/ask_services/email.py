@@ -16,6 +16,54 @@ SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
 
 
+def send_custom_email(
+    *,
+    to_email: str,
+    subject: str,
+    text_body: str,
+    html_body: str,
+    log_context: str = "",
+) -> bool:
+    """Send a custom email via SMTP. Returns True on success."""
+    if not SMTP_HOST:
+        logger.warning("SMTP_HOST not set; skipping email send")
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = SMTP_FROM or SMTP_USER
+    msg["To"] = to_email
+    msg.attach(MIMEText(text_body, "plain"))
+    msg.attach(MIMEText(html_body, "html"))
+
+    try:
+        if SMTP_USE_TLS:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                if SMTP_USER:
+                    server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(msg)
+        else:
+            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+                if SMTP_USER:
+                    server.login(SMTP_USER, SMTP_PASS)
+                server.send_message(msg)
+
+        if log_context:
+            logger.info("Email sent to %s (%s)", to_email, log_context)
+        else:
+            logger.info("Email sent to %s", to_email)
+        return True
+    except Exception:
+        if log_context:
+            logger.exception("Failed to send email to %s (%s)", to_email, log_context)
+        else:
+            logger.exception("Failed to send email to %s", to_email)
+        return False
+
+
 def send_answer_email(
     *,
     to_email: str,
@@ -25,10 +73,6 @@ def send_answer_email(
     question_id: int,
 ) -> bool:
     """Send the answer to the user via SMTP. Returns True on success."""
-    if not SMTP_HOST:
-        logger.warning("SMTP_HOST not set; skipping email send")
-        return False
-
     subject = f"Your question on marcle.ai has been answered (#{question_id})"
 
     # Plain text body
@@ -65,30 +109,10 @@ def send_answer_email(
 </body>
 </html>"""
 
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"] = SMTP_FROM or SMTP_USER
-    msg["To"] = to_email
-    msg.attach(MIMEText(text_body, "plain"))
-    msg.attach(MIMEText(html_body, "html"))
-
-    try:
-        if SMTP_USE_TLS:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                server.ehlo()
-                server.starttls()
-                server.ehlo()
-                if SMTP_USER:
-                    server.login(SMTP_USER, SMTP_PASS)
-                server.send_message(msg)
-        else:
-            with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
-                if SMTP_USER:
-                    server.login(SMTP_USER, SMTP_PASS)
-                server.send_message(msg)
-
-        logger.info("Answer email sent to %s for question_id=%d", to_email, question_id)
-        return True
-    except Exception:
-        logger.exception("Failed to send email to %s for question_id=%d", to_email, question_id)
-        return False
+    return send_custom_email(
+        to_email=to_email,
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        log_context=f"question_id={question_id}",
+    )

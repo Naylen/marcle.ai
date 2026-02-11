@@ -1,6 +1,7 @@
 """Ask app router — question submission, OAuth, answers, admin."""
 
 import asyncio
+import html
 import hmac
 import logging
 import os
@@ -10,8 +11,8 @@ import urllib.parse
 from collections import defaultdict
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Cookie, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
+from pydantic import BaseModel, Field, model_validator
 
 from app.ask_db import (
     DEFAULT_STARTING_POINTS,
@@ -19,7 +20,7 @@ from app.ask_db import (
     get_db,
 )
 from app.ask_services.discord import post_question_to_discord
-from app.ask_services.email import send_answer_email
+from app.ask_services.email import send_answer_email, send_custom_email
 from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
 
 logger = logging.getLogger("marcle.ask")
@@ -52,6 +53,39 @@ class QuestionRequest(BaseModel):
 class AnswerRequest(BaseModel):
     question_id: int
     answer_text: str = Field(..., min_length=1, max_length=10000)
+
+
+class DiscordQuestionRequest(BaseModel):
+    discord_guild_id: str | None = Field(default=None, max_length=64)
+    discord_channel_id: str | None = Field(default=None, max_length=64)
+    discord_message_id: str = Field(..., min_length=1, max_length=64)
+    discord_thread_id: str | None = Field(default=None, max_length=64)
+    author_id: str | None = Field(default=None, max_length=128)
+    author_name: str | None = Field(default=None, max_length=255)
+    author_email: str | None = Field(default=None, max_length=320)
+    content: str = Field(..., min_length=1, max_length=10000)
+
+
+class DiscordAnswerRequest(BaseModel):
+    reply_to_message_id: str | None = Field(default=None, max_length=64)
+    thread_id: str | None = Field(default=None, max_length=64)
+    answer_text: str = Field(..., min_length=1, max_length=10000)
+    discord_answer_message_id: str | None = Field(default=None, max_length=64)
+    discord_guild_id: str | None = Field(default=None, max_length=64)
+    discord_channel_id: str | None = Field(default=None, max_length=64)
+    question_permalink: str | None = Field(default=None, max_length=1000)
+    thread_permalink: str | None = Field(default=None, max_length=1000)
+    answer_permalink: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def _validate_lookup_fields(self):
+        reply_to = (self.reply_to_message_id or "").strip()
+        thread_id = (self.thread_id or "").strip()
+        if not (reply_to or thread_id):
+            raise ValueError("Either reply_to_message_id or thread_id must be provided")
+        self.reply_to_message_id = reply_to or None
+        self.thread_id = thread_id or None
+        return self
 
 
 class UserResponse(BaseModel):
@@ -162,6 +196,102 @@ def _get_oauth_redirect_uri(request: Request) -> str:
     if configured_redirect:
         return configured_redirect
     return f"{_get_public_base_url(request)}/api/ask/auth/callback"
+
+
+def _require_n8n_token(x_n8n_token: str = Header(default="", alias="X-N8N-TOKEN")) -> None:
+    """Validate n8n shared token for Discord integration endpoints."""
+    n8n_token = os.getenv("N8N_TOKEN", "")
+    if not n8n_token or not hmac.compare_digest(x_n8n_token, n8n_token):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid n8n token",
+        )
+
+
+def _discord_placeholder_email(author_id: str | None) -> str:
+    """Build a deterministic fallback email for Discord-origin records."""
+    safe_author = "".join(ch for ch in (author_id or "unknown") if ch.isalnum() or ch in {"-", "_"})
+    if not safe_author:
+        safe_author = "unknown"
+    return f"{safe_author}@discord.local"
+
+
+def _question_preview(question_text: str, limit: int = 72) -> str:
+    collapsed = " ".join(question_text.split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return f"{collapsed[: limit - 3]}..."
+
+
+def _build_discord_answer_email(
+    *,
+    to_name: str,
+    question_text: str,
+    answer_text: str,
+    question_permalink: str | None,
+    thread_permalink: str | None,
+    answer_permalink: str | None,
+) -> tuple[str, str, str]:
+    """Create subject + plain/html bodies for Discord answer notifications."""
+    preview = _question_preview(question_text)
+    subject = f"Answer: {preview}"
+
+    link_pairs = [
+        ("Question permalink", question_permalink),
+        ("Thread permalink", thread_permalink),
+        ("Answer permalink", answer_permalink),
+    ]
+    present_links = [(label, value) for label, value in link_pairs if value]
+
+    text_body = (
+        f"Hi {to_name},\n\n"
+        "A Discord question has been answered.\n\n"
+        f"--- Question ---\n{question_text}\n\n"
+        f"--- Answer ---\n{answer_text}\n"
+    )
+    if present_links:
+        text_body += "\n--- Discord Links ---\n"
+        text_body += "\n".join(f"{label}: {value}" for label, value in present_links)
+        text_body += "\n"
+
+    html_question = html.escape(question_text).replace("\n", "<br>")
+    html_answer = html.escape(answer_text).replace("\n", "<br>")
+    html_links = ""
+    if present_links:
+        items = []
+        for label, value in present_links:
+            escaped_label = html.escape(label)
+            escaped_url = html.escape(value)
+            items.append(f'<li><strong>{escaped_label}:</strong> <a href="{escaped_url}">{escaped_url}</a></li>')
+        html_links = (
+            "<div style=\"margin-top: 16px;\">"
+            "<p style=\"margin: 0 0 6px 0; font-size: 12px; text-transform: uppercase; color: #8b949e;\">Discord Links</p>"
+            f"<ul style=\"margin: 0; padding-left: 20px; color: #c9d1d9;\">{''.join(items)}</ul>"
+            "</div>"
+        )
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 640px; margin: 0 auto; padding: 20px; color: #e5ecf5; background: #0c1117;">
+  <div style="background: #161b22; border-radius: 12px; padding: 24px; border: 1px solid rgba(255,255,255,0.08);">
+    <h2 style="color: #4ade80; margin-top: 0;">Discord Answer</h2>
+    <p style="color: #8b949e;">Hi {html.escape(to_name)},</p>
+
+    <div style="background: #0d1117; border-radius: 8px; padding: 16px; margin: 16px 0; border-left: 3px solid #5865F2;">
+      <p style="color: #8b949e; margin: 0 0 4px 0; font-size: 12px; text-transform: uppercase;">Question</p>
+      <p style="color: #e5ecf5; margin: 0;">{html_question}</p>
+    </div>
+
+    <div style="background: #0d1117; border-radius: 8px; padding: 16px; margin: 16px 0; border-left: 3px solid #4ade80;">
+      <p style="color: #8b949e; margin: 0 0 4px 0; font-size: 12px; text-transform: uppercase;">Answer</p>
+      <p style="color: #e5ecf5; margin: 0;">{html_answer}</p>
+    </div>
+    {html_links}
+  </div>
+</body>
+</html>"""
+    return subject, text_body, html_body
 
 
 # --- Auth Endpoints ---
@@ -405,6 +535,154 @@ async def list_questions(
         )
         for q in questions
     ]
+
+
+@router.post("/discord/question")
+async def upsert_discord_question(
+    body: DiscordQuestionRequest,
+    _: None = Depends(_require_n8n_token),
+):
+    """Upsert a question record from a Discord message for n8n."""
+
+    def _upsert():
+        with get_db() as conn:
+            now = datetime.now(timezone.utc).isoformat()
+            author_id = (body.author_id or "").strip() or "unknown"
+            author_name = (body.author_name or f"Discord User {author_id}").strip()[:255]
+            author_email = (body.author_email or _discord_placeholder_email(author_id)).strip()[:320]
+            google_id = f"discord:{author_id}"
+
+            user_row = conn.execute(
+                "SELECT id FROM users WHERE google_id = ?",
+                (google_id,),
+            ).fetchone()
+            if user_row:
+                user_id = user_row["id"]
+                conn.execute(
+                    "UPDATE users SET email = ?, name = ?, updated_at = ? WHERE id = ?",
+                    (author_email, author_name, now, user_id),
+                )
+            else:
+                cursor = conn.execute(
+                    "INSERT INTO users (google_id, email, name, picture_url, points) VALUES (?, ?, ?, ?, ?)",
+                    (google_id, author_email, author_name, "", 0),
+                )
+                user_id = cursor.lastrowid
+
+            existing = conn.execute(
+                "SELECT id FROM questions WHERE discord_message_id = ?",
+                (body.discord_message_id,),
+            ).fetchone()
+            if existing:
+                conn.execute(
+                    "UPDATE questions SET user_id = ?, question_text = ?, discord_guild_id = ?, discord_channel_id = ?, discord_thread_id = ? WHERE id = ?",
+                    (
+                        user_id,
+                        body.content,
+                        body.discord_guild_id,
+                        body.discord_channel_id,
+                        body.discord_thread_id,
+                        existing["id"],
+                    ),
+                )
+                conn.commit()
+                return existing["id"], "updated"
+
+            cursor = conn.execute(
+                "INSERT INTO questions (user_id, question_text, points_spent, status, discord_sent, discord_guild_id, discord_channel_id, discord_message_id, discord_thread_id) "
+                "VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, ?)",
+                (
+                    user_id,
+                    body.content,
+                    0,
+                    body.discord_guild_id,
+                    body.discord_channel_id,
+                    body.discord_message_id,
+                    body.discord_thread_id,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid, "created"
+
+    question_id, result = await asyncio.to_thread(_upsert)
+    return {
+        "question_id": question_id,
+        "status": result,
+    }
+
+
+@router.post("/discord/answer")
+async def attach_discord_answer(
+    body: DiscordAnswerRequest,
+    _: None = Depends(_require_n8n_token),
+):
+    """Attach a Discord answer to a question, then email it."""
+
+    def _attach():
+        with get_db() as conn:
+            question = None
+            if body.reply_to_message_id:
+                question = conn.execute(
+                    "SELECT q.*, u.email, u.name FROM questions q JOIN users u ON q.user_id = u.id WHERE q.discord_message_id = ? ORDER BY q.id DESC LIMIT 1",
+                    (body.reply_to_message_id,),
+                ).fetchone()
+            if question is None and body.thread_id:
+                question = conn.execute(
+                    "SELECT q.*, u.email, u.name FROM questions q JOIN users u ON q.user_id = u.id WHERE q.discord_thread_id = ? ORDER BY q.id DESC LIMIT 1",
+                    (body.thread_id,),
+                ).fetchone()
+
+            if question is None:
+                return None, "Question not found"
+
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                "UPDATE questions SET answer_text = ?, answered_at = ?, status = 'answered', "
+                "discord_answer_message_id = ?, "
+                "discord_thread_id = COALESCE(?, discord_thread_id), "
+                "discord_guild_id = COALESCE(?, discord_guild_id), "
+                "discord_channel_id = COALESCE(?, discord_channel_id) "
+                "WHERE id = ?",
+                (
+                    body.answer_text,
+                    now,
+                    body.discord_answer_message_id,
+                    body.thread_id,
+                    body.discord_guild_id,
+                    body.discord_channel_id,
+                    question["id"],
+                ),
+            )
+            conn.commit()
+            return dict(question), None
+
+    question_data, error = await asyncio.to_thread(_attach)
+    if error:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error)
+
+    subject, text_body, html_body = _build_discord_answer_email(
+        to_name=question_data["name"] or "there",
+        question_text=question_data["question_text"],
+        answer_text=body.answer_text,
+        question_permalink=body.question_permalink,
+        thread_permalink=body.thread_permalink,
+        answer_permalink=body.answer_permalink,
+    )
+    email_ok = await asyncio.to_thread(
+        send_custom_email,
+        to_email=question_data["email"],
+        subject=subject,
+        text_body=text_body,
+        html_body=html_body,
+        log_context=f"discord_question_id={question_data['id']}",
+    )
+    if not email_ok:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send answer email")
+
+    return {
+        "question_id": question_data["id"],
+        "emailed": True,
+    }
 
 
 # --- Answer Endpoint (webhook from Marc / n8n) ---

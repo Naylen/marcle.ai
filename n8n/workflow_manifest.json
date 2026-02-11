@@ -1,0 +1,14 @@
+[
+  {
+    "key": "discord_question_upsert",
+    "name": "Discord \u2192 Ask: Upsert Question",
+    "file": "n8n/workflows/discord_question_upsert.json",
+    "description": "Ingest Discord question messages from the configured questions channel and upsert them into Ask backend."
+  },
+  {
+    "key": "discord_thread_answer_email",
+    "name": "Discord \u2192 Ask: Thread Reply \u2192 Save Answer \u2192 Email",
+    "file": "n8n/workflows/discord_thread_answer_email.json",
+    "description": "Capture Discord thread replies or referenced replies, persist answer to Ask backend, and trigger backend email flow."
+  }
+]
