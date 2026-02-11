@@ -47,6 +47,35 @@
     return !["GET", "HEAD", "OPTIONS", "TRACE"].includes(normalized);
   }
 
+  async function readErrorPayload(resp) {
+    try {
+      const payload = await resp.json();
+      if (!payload || typeof payload !== "object") return {};
+      return payload;
+    } catch {
+      return {};
+    }
+  }
+
+  function extractErrorCode(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    if (typeof payload.error === "string") return payload.error;
+    if (typeof payload.detail === "string") return payload.detail;
+    if (payload.detail && typeof payload.detail === "object" && typeof payload.detail.error === "string") {
+      return payload.detail.error;
+    }
+    return "";
+  }
+
+  function ensureCsrfHintForAuthenticatedSession() {
+    const csrfToken = getCookie("ask_csrf");
+    if (!csrfToken) {
+      showStatus("error", "Session ready but CSRF token missing. Refresh.");
+      return false;
+    }
+    return true;
+  }
+
   // --- API Helpers ---
   async function apiFetch(path, options = {}) {
     const method = String(options.method || "GET").toUpperCase();
@@ -54,7 +83,7 @@
     const requestHeaders = {
       ...(options.headers || {}),
     };
-    if (isMutatingMethod(method) && csrfToken) {
+    if (isMutatingMethod(method)) {
       requestHeaders["X-CSRF-Token"] = csrfToken;
     }
 
@@ -76,7 +105,10 @@
       if (resp.ok) {
         currentUser = await resp.json();
         showApp();
+        ensureCsrfHintForAuthenticatedSession();
         loadQuestions();
+      } else if (resp.status === 401) {
+        showLogin();
       } else {
         showLogin();
       }
@@ -138,9 +170,18 @@
 
   logoutBtn.addEventListener("click", async () => {
     try {
-      await apiFetch("/auth/logout", { method: "POST" });
+      const resp = await apiFetch("/auth/logout", { method: "POST" });
+      if (!resp.ok) {
+        const payload = await readErrorPayload(resp);
+        const errorCode = extractErrorCode(payload);
+        if (resp.status === 403 && errorCode === "invalid_csrf") {
+          showStatus("error", "Security token expired. Refresh page.");
+          return;
+        }
+      }
     } catch {
-      // Ignore
+      showStatus("error", "Network error. Please try again.");
+      return;
     }
     for (const stream of activeQuestionStreams.values()) {
       stream.close();
@@ -197,20 +238,26 @@
         openQuestionStream(data.question_id);
         loadQuestions();
       } else {
-        const err = await resp.json().catch(() => ({}));
-        showStatus(
-          "error",
-          err.detail || `Failed to submit (${resp.status})`
-        );
+        const err = await readErrorPayload(resp);
+        const errorCode = extractErrorCode(err);
+        if (resp.status === 403 && errorCode === "invalid_csrf") {
+          showStatus("error", "Security token expired. Refresh page.");
+        } else {
+          showStatus(
+            "error",
+            errorCode || err.detail || `Failed to submit (${resp.status})`
+          );
+        }
       }
     } catch (e) {
       showStatus("error", "Network error. Please try again.");
-    }
-
-    submitBtn.disabled = false;
-    submitBtn.innerHTML = "Submit Question";
-    if (currentUser) {
-      submitBtn.disabled = currentUser.points < getCost();
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.innerHTML = "Submit Question";
+      if (currentUser) {
+        const len = questionTextarea.value.trim().length;
+        submitBtn.disabled = len < 10 || currentUser.points < getCost();
+      }
     }
   });
 

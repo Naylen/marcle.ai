@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator
 
 from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Request, Response, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
 from app import config as app_config
@@ -162,14 +162,18 @@ class QuestionResponse(BaseModel):
 def _create_session(user_row: dict) -> str:
     """Create a session token for an authenticated user."""
     token = secrets.token_urlsafe(32)
+    csrf_token = secrets.token_urlsafe(32)
     _sessions[token] = {
         "user_id": user_row["id"],
         "google_id": user_row["google_id"],
         "email": user_row["email"],
         "name": user_row["name"],
         "picture_url": user_row["picture_url"],
+        "csrf_token": csrf_token,
         "created_at": time.time(),
     }
+    logger.debug("ask_session_created user_id=%s", user_row["id"])
+    logger.debug("ask_csrf_generated user_id=%s", user_row["id"])
     return token
 
 
@@ -181,25 +185,40 @@ def _get_session(token: str | None) -> dict | None:
     if session is None:
         return None
     # Sessions expire after 24 hours
-    if time.time() - session["created_at"] > 86400:
+    if time.time() - session["created_at"] > ASK_SESSION_MAX_AGE_SECONDS:
+        user_id = session.get("user_id")
         _sessions.pop(token, None)
+        logger.debug("ask_session_expired user_id=%s", user_id)
         return None
     return session
 
 
-def _require_session(ask_session: str | None = None, request: Request | None = None) -> dict:
-    """Validate session or raise 401."""
+def _unauthorized_response() -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content={"error": "unauthorized"})
+
+
+def _invalid_csrf_response() -> JSONResponse:
+    return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"error": "invalid_csrf"})
+
+
+def _get_session_or_none(ask_session: str | None = None, request: Request | None = None) -> dict | None:
     token = ask_session
     if token is None and request is not None:
         token = request.cookies.get("ask_session")
-    session = _get_session(token)
-    if session is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
-    return session
+    return _get_session(token)
 
 
-def _set_csrf_cookie(response: Response, *, secure: bool) -> str:
+def _ensure_session_csrf(session: dict) -> str:
+    token = str(session.get("csrf_token") or "").strip()
+    if token:
+        return token
     token = secrets.token_urlsafe(32)
+    session["csrf_token"] = token
+    logger.debug("ask_csrf_generated user_id=%s", session.get("user_id"))
+    return token
+
+
+def _set_csrf_cookie(response: Response, *, secure: bool, token: str) -> str:
     response.set_cookie(
         key=ASK_CSRF_COOKIE_NAME,
         value=token,
@@ -213,19 +232,36 @@ def _set_csrf_cookie(response: Response, *, secure: bool) -> str:
     return token
 
 
-def _require_csrf(
-    x_csrf_token: str = Header(default="", alias="X-CSRF-Token"),
-    ask_csrf: str | None = Cookie(default=None, alias=ASK_CSRF_COOKIE_NAME),
-) -> None:
+def _validate_csrf(
+    *,
+    session: dict,
+    x_csrf_token: str,
+    ask_csrf: str | None,
+) -> bool:
     cookie_token = (ask_csrf or "").strip()
     header_token = (x_csrf_token or "").strip()
-    if not cookie_token or not header_token or not hmac.compare_digest(header_token, cookie_token):
-        logger.warning(
-            "ask_csrf_rejected reason=token_mismatch cookie_present=%s header_present=%s",
+    session_token = _ensure_session_csrf(session)
+    if not cookie_token or not header_token:
+        logger.debug(
+            "ask_csrf_mismatch reason=missing_token user_id=%s cookie_present=%s header_present=%s",
+            session.get("user_id"),
             bool(cookie_token),
             bool(header_token),
         )
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
+        return False
+    if not hmac.compare_digest(header_token, cookie_token):
+        logger.debug(
+            "ask_csrf_mismatch reason=header_cookie user_id=%s",
+            session.get("user_id"),
+        )
+        return False
+    if not hmac.compare_digest(header_token, session_token):
+        logger.debug(
+            "ask_csrf_mismatch reason=session_cookie user_id=%s",
+            session.get("user_id"),
+        )
+        return False
+    return True
 
 
 def _public_question_status(question_row: dict[str, Any]) -> str:
@@ -940,6 +976,9 @@ async def auth_callback(
 
     user_row = await asyncio.to_thread(_upsert_user)
     session_token = _create_session(user_row)
+    session = _sessions.get(session_token) or {}
+    csrf_token = _ensure_session_csrf(session)
+    cookie_secure = base_public_url.startswith("https")
 
     # Redirect to /ask with session cookie
     response = Response(
@@ -951,22 +990,30 @@ async def auth_callback(
         value=session_token,
         httponly=True,
         samesite="lax",
-        secure=base_public_url.startswith("https"),
+        secure=cookie_secure,
         max_age=ASK_SESSION_MAX_AGE_SECONDS,
         expires=ASK_SESSION_MAX_AGE_SECONDS,
         path="/",
     )
-    _set_csrf_cookie(response, secure=base_public_url.startswith("https"))
+    _set_csrf_cookie(response, secure=cookie_secure, token=csrf_token)
     logger.info("ask_auth_login_success user_id=%s", user_row["id"])
     return response
 
 
 @router.post("/auth/logout")
 async def auth_logout(
+    request: Request,
     ask_session: str | None = Cookie(default=None),
-    _: None = Depends(_require_csrf),
+    ask_csrf: str | None = Cookie(default=None, alias=ASK_CSRF_COOKIE_NAME),
+    x_csrf_token: str = Header(default="", alias="X-CSRF-Token"),
 ):
     """Clear the session."""
+    session = _get_session_or_none(ask_session, request)
+    if session is None:
+        return _unauthorized_response()
+    if not _validate_csrf(session=session, x_csrf_token=x_csrf_token, ask_csrf=ask_csrf):
+        return _invalid_csrf_response()
+
     removed = False
     if ask_session:
         removed = _sessions.pop(ask_session, None) is not None
@@ -986,7 +1033,9 @@ async def get_me(
     ask_session: str | None = Cookie(default=None),
 ):
     """Return current user info and points balance."""
-    session = _require_session(ask_session)
+    session = _get_session_or_none(ask_session, request)
+    if session is None:
+        return _unauthorized_response()
     user_id = session["user_id"]
 
     def _fetch_user():
@@ -999,7 +1048,11 @@ async def get_me(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
     secure_cookie = _get_public_base_url(request).startswith("https")
-    _set_csrf_cookie(response, secure=secure_cookie)
+    _set_csrf_cookie(
+        response,
+        secure=secure_cookie,
+        token=_ensure_session_csrf(session),
+    )
     return UserResponse(
         id=user["id"],
         name=user["name"],
@@ -1013,12 +1066,26 @@ async def get_me(
 @router.post("/questions", status_code=status.HTTP_201_CREATED)
 async def submit_question(
     body: QuestionRequest,
+    request: Request,
     ask_session: str | None = Cookie(default=None),
-    _: None = Depends(_require_csrf),
+    ask_csrf: str | None = Cookie(default=None, alias=ASK_CSRF_COOKIE_NAME),
+    x_csrf_token: str = Header(default="", alias="X-CSRF-Token"),
 ):
     """Submit a question. Deducts points only when ASK_POINTS_ENABLED is true."""
-    session = _require_session(ask_session)
+    session = _get_session_or_none(ask_session, request)
+    if session is None:
+        return _unauthorized_response()
+    if not _validate_csrf(session=session, x_csrf_token=x_csrf_token, ask_csrf=ask_csrf):
+        return _invalid_csrf_response()
     user_id = session["user_id"]
+
+    normalized_question_text = (body.question_text or "").strip()
+    if not normalized_question_text:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "invalid_question"})
+    if len(normalized_question_text) > 5000:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "question_too_long"})
+    if len(normalized_question_text) < 10:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"error": "question_too_short"})
 
     _check_rate_limit(user_id)
 
@@ -1052,7 +1119,7 @@ async def submit_question(
                 "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)",
                 (
                     user_id,
-                    body.question_text,
+                    normalized_question_text,
                     points_spent,
                     created_at.isoformat(),
                     human_deadline_at.isoformat(),
@@ -1085,7 +1152,7 @@ async def submit_question(
         question_id=result["question_id"],
         user_name=result["user_name"],
         user_email=result["user_email"],
-        question_text=body.question_text,
+        question_text=normalized_question_text,
     )
 
     # Update Discord metadata (best effort)
@@ -1139,11 +1206,14 @@ async def submit_question(
 
 @router.get("/questions")
 async def list_questions(
+    request: Request,
     ask_session: str | None = Cookie(default=None),
     limit: int = Query(default=20, ge=1, le=100),
 ):
     """List the current user's questions."""
-    session = _require_session(ask_session)
+    session = _get_session_or_none(ask_session, request)
+    if session is None:
+        return _unauthorized_response()
     user_id = session["user_id"]
 
     def _fetch():
@@ -1172,7 +1242,9 @@ async def list_questions(
 @router.get("/questions/{question_id}/events")
 async def question_events_stream(question_id: int, request: Request):
     """Stream live Ask updates for one question via SSE."""
-    session = _require_session(request=request)
+    session = _get_session_or_none(request=request)
+    if session is None:
+        return _unauthorized_response()
     user_id = int(session["user_id"])
 
     question = await asyncio.to_thread(_fetch_question_for_user_sync, question_id, user_id)

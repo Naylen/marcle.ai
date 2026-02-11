@@ -57,15 +57,23 @@ def _insert_question(
         return int(cursor.lastrowid)
 
 
-def _create_session(user_id: int, email: str, name: str = "User") -> str:
+def _create_session(
+    user_id: int,
+    email: str,
+    name: str = "User",
+    csrf_token: str | None = None,
+    created_at: float | None = None,
+) -> str:
     token = f"sess-{user_id}-{int(time.time() * 1000)}"
+    csrf_value = csrf_token or f"csrf-{user_id}-{int(time.time() * 1000)}"
     ask_module._sessions[token] = {
         "user_id": user_id,
         "google_id": f"google:{email}",
         "email": email,
         "name": name,
         "picture_url": "",
-        "created_at": time.time(),
+        "csrf_token": csrf_value,
+        "created_at": created_at if created_at is not None else time.time(),
     }
     return token
 
@@ -94,7 +102,7 @@ def test_get_me_sets_csrf_cookie(tmp_path):
 def test_submit_question_requires_csrf(tmp_path, monkeypatch):
     _reset_ask_db(tmp_path)
     user_id = _insert_user("owner@example.com")
-    session_token = _create_session(user_id, "owner@example.com")
+    session_token = _create_session(user_id, "owner@example.com", csrf_token="csrf-token-1")
 
     async def _fake_post_question(**_kwargs):
         return SimpleNamespace(
@@ -112,6 +120,7 @@ def test_submit_question_requires_csrf(tmp_path, monkeypatch):
 
     missing = client.post("/api/ask/questions", cookies=cookies, json=payload)
     assert missing.status_code == 403
+    assert missing.json() == {"error": "invalid_csrf"}
 
     mismatch = client.post(
         "/api/ask/questions",
@@ -120,30 +129,130 @@ def test_submit_question_requires_csrf(tmp_path, monkeypatch):
         json=payload,
     )
     assert mismatch.status_code == 403
+    assert mismatch.json() == {"error": "invalid_csrf"}
 
-    ok = client.post(
+    wrong_server_token = client.post(
         "/api/ask/questions",
         cookies=cookies,
         headers={"X-CSRF-Token": "csrf-token-1"},
         json=payload,
     )
-    assert ok.status_code == 201
+    assert wrong_server_token.status_code == 201
+
+    ask_module._sessions[session_token]["csrf_token"] = "server-side-different-token"
+    session_mismatch = client.post(
+        "/api/ask/questions",
+        cookies=cookies,
+        headers={"X-CSRF-Token": "csrf-token-1"},
+        json=payload,
+    )
+    assert session_mismatch.status_code == 403
+    assert session_mismatch.json() == {"error": "invalid_csrf"}
 
 
 def test_logout_requires_csrf(tmp_path):
     _reset_ask_db(tmp_path)
     user_id = _insert_user("owner@example.com")
-    session_token = _create_session(user_id, "owner@example.com")
+    session_token = _create_session(user_id, "owner@example.com", csrf_token="csrf-token-logout")
 
     client = TestClient(app)
     cookies = {"ask_session": session_token, "ask_csrf": "csrf-token-logout"}
 
     missing = client.post("/api/ask/auth/logout", cookies=cookies)
     assert missing.status_code == 403
+    assert missing.json() == {"error": "invalid_csrf"}
 
     ok = client.post("/api/ask/auth/logout", cookies=cookies, headers={"X-CSRF-Token": "csrf-token-logout"})
     assert ok.status_code == 200
     assert session_token not in ask_module._sessions
+
+
+def test_submit_question_rejects_whitespace_only(tmp_path, monkeypatch):
+    _reset_ask_db(tmp_path)
+    user_id = _insert_user("space@example.com")
+    session_token = _create_session(user_id, "space@example.com", csrf_token="csrf-whitespace")
+
+    async def _fake_post_question(**_kwargs):
+        return SimpleNamespace(
+            delivered=False,
+            guild_id=None,
+            channel_id=None,
+            message_id=None,
+            thread_id=None,
+        )
+
+    monkeypatch.setattr(ask_module, "post_question_to_discord", _fake_post_question)
+    client = TestClient(app)
+    response = client.post(
+        "/api/ask/questions",
+        cookies={"ask_session": session_token, "ask_csrf": "csrf-whitespace"},
+        headers={"X-CSRF-Token": "csrf-whitespace"},
+        json={"question_text": "          "},
+    )
+
+    assert response.status_code == 400
+    assert response.json().get("detail", {}).get("error") == "invalid_question"
+
+
+def test_session_expiration_returns_unauthorized(tmp_path):
+    _reset_ask_db(tmp_path)
+    user_id = _insert_user("expired@example.com")
+    session_token = _create_session(
+        user_id,
+        "expired@example.com",
+        created_at=time.time() - (ask_module.ASK_SESSION_MAX_AGE_SECONDS + 5),
+    )
+
+    client = TestClient(app)
+    response = client.get("/api/ask/me", cookies={"ask_session": session_token})
+
+    assert response.status_code == 401
+    assert response.json() == {"error": "unauthorized"}
+    assert session_token not in ask_module._sessions
+
+
+def test_oauth_callback_sets_hardened_session_and_csrf_cookies(tmp_path, monkeypatch):
+    _reset_ask_db(tmp_path)
+    async def _fake_exchange_code(code, redirect_uri):
+        return {"access_token": f"token-{code}-{redirect_uri}"}
+
+    async def _fake_get_user_info(access_token):
+        return {
+            "id": "google-user-1",
+            "email": "cookie-test@example.com",
+            "name": "Cookie Test",
+            "picture": "",
+        }
+
+    monkeypatch.setattr(ask_module, "exchange_code", _fake_exchange_code)
+    monkeypatch.setattr(ask_module, "get_user_info", _fake_get_user_info)
+
+    state = "oauth-state-cookie-test"
+    ask_module._oauth_states[state] = {
+        "created_at": time.time(),
+        "redirect_uri": "http://localhost:9182/api/ask/auth/callback",
+        "base_public_url": "http://localhost:9182",
+    }
+
+    client = TestClient(app)
+    response = client.get(f"/api/ask/auth/callback?code=abc123&state={state}", follow_redirects=False)
+
+    assert response.status_code == 307
+    set_cookies = response.headers.get_list("set-cookie")
+    ask_session_cookie = next((item for item in set_cookies if item.startswith("ask_session=")), "")
+    ask_csrf_cookie = next((item for item in set_cookies if item.startswith("ask_csrf=")), "")
+
+    assert ask_session_cookie
+    assert "HttpOnly" in ask_session_cookie
+    assert "SameSite=lax" in ask_session_cookie
+    assert "Path=/" in ask_session_cookie
+    assert "Max-Age=86400" in ask_session_cookie
+
+    assert ask_csrf_cookie
+    assert "HttpOnly" not in ask_csrf_cookie
+    assert "SameSite=lax" in ask_csrf_cookie
+    assert "Path=/" in ask_csrf_cookie
+    assert "Max-Age=86400" in ask_csrf_cookie
 
 
 def test_sse_enforces_question_ownership(tmp_path):
@@ -286,4 +395,3 @@ def test_discord_answer_requires_support_role_and_is_idempotent(tmp_path, monkey
 
     updated = _fetch_question(question_id)
     assert updated["answer_text"] == "Overwritten by admin override"
-
