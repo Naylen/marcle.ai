@@ -156,7 +156,7 @@ Features implemented:
 - Google OAuth2 login
 - In-memory session tokens (24h expiry)
 - Per-user in-memory rate limit (5 questions / 60s)
-- Points system with DB constraint to prevent negative balances
+- Points system (feature-flag controlled via ASK_POINTS_ENABLED; currently disabled by default)
 - SSE stream endpoint for per-question updates
 - Discord role-gated human answer ingestion (thread messages only)
 - LLM fallback answer worker after deadline
@@ -228,7 +228,7 @@ Use `.env.example` as source of truth. Important groups:
 - Runtime paths: `SERVICES_CONFIG_PATH`, `NOTIFICATIONS_CONFIG_PATH`, `OBSERVATIONS_PATH`, `AUDIT_LOG_PATH`, `ASK_DB_PATH`
 - Security/admin: `ADMIN_TOKEN`, `EXPOSE_SERVICE_URLS`, `CORS_ORIGINS`
 - Flapping/incident behavior: `FLAP_WINDOW_SECONDS`, `FLAP_THRESHOLD`, `OBSERVATIONS_HISTORY_LIMIT`
-- Ask OAuth/session/webhook/mail: `GOOGLE_*`, `SESSION_SECRET`, `ASK_ANSWER_WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `BASE_PUBLIC_URL`
+- Ask OAuth/session/webhook/mail: `GOOGLE_*`, `SESSION_SECRET`, `ASK_ANSWER_WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `BASE_PUBLIC_URL`, `ASK_POINTS_ENABLED`
 - Ask Discord + fallback worker: `DISCORD_BOT_TOKEN`, `DISCORD_SUPPORT_ROLE_ID`, `ASK_FALLBACK_SECONDS`
 - Ask n8n integration: `N8N_TOKEN`
 - Ask LLM fallback: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`

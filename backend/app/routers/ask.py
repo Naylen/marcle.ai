@@ -17,6 +17,7 @@ from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query, Re
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 
+from app import config as app_config
 from app.ask_db import (
     DEFAULT_STARTING_POINTS,
     POINTS_PER_QUESTION,
@@ -38,6 +39,7 @@ ASK_ANSWER_WEBHOOK_SECRET: str = os.getenv("ASK_ANSWER_WEBHOOK_SECRET", "")
 BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
 ASK_FALLBACK_SECONDS: int = int(os.getenv("ASK_FALLBACK_SECONDS", "300"))
 ASK_FALLBACK_SWEEP_SECONDS: int = int(os.getenv("ASK_FALLBACK_SWEEP_SECONDS", "10"))
+ASK_POINTS_ENABLED: bool = app_config.ASK_POINTS_ENABLED
 
 # Rate limiting: per-user, in-memory
 _rate_limit_window: int = 60  # seconds
@@ -741,7 +743,7 @@ async def submit_question(
     body: QuestionRequest,
     ask_session: str | None = Cookie(default=None),
 ):
-    """Submit a question. Costs POINTS_PER_QUESTION points. Posts to Discord."""
+    """Submit a question. Deducts points only when ASK_POINTS_ENABLED is true."""
     session = _require_session(ask_session)
     user_id = session["user_id"]
 
@@ -749,39 +751,46 @@ async def submit_question(
 
     def _create_question():
         with get_db() as conn:
-            # Atomic: decrement points + insert question in one transaction
             user = conn.execute("SELECT id, points, name, email FROM users WHERE id = ?", (user_id,)).fetchone()
             if not user:
                 return None, "User not found"
-            if user["points"] < POINTS_PER_QUESTION:
-                return None, "Insufficient points"
 
-            conn.execute(
-                "UPDATE users SET points = points - ?, updated_at = ? WHERE id = ? AND points >= ?",
-                (POINTS_PER_QUESTION, datetime.now(timezone.utc).isoformat(), user_id, POINTS_PER_QUESTION),
-            )
-            # Verify the update actually happened (race condition guard)
-            if conn.execute("SELECT changes()").fetchone()[0] == 0:
-                conn.rollback()
-                return None, "Insufficient points (race)"
+            points_spent = POINTS_PER_QUESTION if ASK_POINTS_ENABLED else 0
+            remaining_points: int | None = None
+
+            if ASK_POINTS_ENABLED:
+                # Atomic: decrement points + insert question in one transaction
+                if user["points"] < POINTS_PER_QUESTION:
+                    return None, "Insufficient points"
+
+                conn.execute(
+                    "UPDATE users SET points = points - ?, updated_at = ? WHERE id = ? AND points >= ?",
+                    (POINTS_PER_QUESTION, datetime.now(timezone.utc).isoformat(), user_id, POINTS_PER_QUESTION),
+                )
+                # Verify the update actually happened (race condition guard)
+                if conn.execute("SELECT changes()").fetchone()[0] == 0:
+                    conn.rollback()
+                    return None, "Insufficient points (race)"
 
             created_at = datetime.now(timezone.utc)
             deadline_at = created_at + timedelta(seconds=max(ASK_FALLBACK_SECONDS, 1))
             cursor = conn.execute(
                 "INSERT INTO questions (user_id, question_text, points_spent, status, created_at, deadline_at) "
                 "VALUES (?, ?, ?, 'pending', ?, ?)",
-                (user_id, body.question_text, POINTS_PER_QUESTION, created_at.isoformat(), deadline_at.isoformat()),
+                (user_id, body.question_text, points_spent, created_at.isoformat(), deadline_at.isoformat()),
             )
             conn.commit()
 
             question_id = cursor.lastrowid
-            remaining_points = conn.execute("SELECT points FROM users WHERE id = ?", (user_id,)).fetchone()["points"]
+            if ASK_POINTS_ENABLED:
+                remaining_points = conn.execute("SELECT points FROM users WHERE id = ?", (user_id,)).fetchone()["points"]
             return {
                 "question_id": question_id,
                 "user_name": user["name"],
                 "user_email": user["email"],
                 "remaining_points": remaining_points,
                 "deadline_at": deadline_at.isoformat(),
+                "points_spent": points_spent,
             }, None
 
     result, error = await asyncio.to_thread(_create_question)
@@ -826,7 +835,7 @@ async def submit_question(
 
     return {
         "question_id": result["question_id"],
-        "points_spent": POINTS_PER_QUESTION,
+        "points_spent": result["points_spent"],
         "remaining_points": result["remaining_points"],
         "discord_notified": discord_result.delivered,
     }
@@ -1137,6 +1146,8 @@ class AdminAdjustPointsRequest(BaseModel):
 async def admin_adjust_points(body: AdminAdjustPointsRequest, request: Request):
     """Adjust a user's point balance. Requires ADMIN_TOKEN."""
     _require_admin_token(request)
+    if not ASK_POINTS_ENABLED:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Points system disabled")
 
     def _adjust():
         with get_db() as conn:

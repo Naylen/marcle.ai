@@ -69,3 +69,6 @@ OLLAMA_URL: str = os.getenv("OLLAMA_URL", "")
 
 # n8n
 N8N_URL: str = os.getenv("N8N_URL", "")
+
+# Ask feature flags
+ASK_POINTS_ENABLED: bool = _env_bool("ASK_POINTS_ENABLED", False)
