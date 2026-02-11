@@ -41,6 +41,9 @@ ASK_HUMAN_WAIT_SECONDS: int = max(int(app_config.ASK_HUMAN_WAIT_SECONDS), 1)
 ASK_OPENAI_WAIT_SECONDS: int = max(int(app_config.ASK_OPENAI_WAIT_SECONDS), ASK_HUMAN_WAIT_SECONDS)
 ASK_FALLBACK_SWEEP_SECONDS: int = int(os.getenv("ASK_FALLBACK_SWEEP_SECONDS", "10"))
 ASK_POINTS_ENABLED: bool = app_config.ASK_POINTS_ENABLED
+ASK_SESSION_MAX_AGE_SECONDS: int = 86400
+ASK_CSRF_COOKIE_NAME: str = "ask_csrf"
+ASK_WEBHOOK_MAX_BYTES: int = int(os.getenv("ASK_WEBHOOK_MAX_BYTES", str(64 * 1024)))
 
 # Rate limiting: per-user, in-memory
 _rate_limit_window: int = 60  # seconds
@@ -110,6 +113,8 @@ class DiscordAnswerRequest(BaseModel):
     discord_answer_message_id: str | None = Field(default=None, max_length=64)
     discord_guild_id: str | None = Field(default=None, max_length=64)
     discord_channel_id: str | None = Field(default=None, max_length=64)
+    author_role_ids: list[str] | None = Field(default=None)
+    member_role_ids: list[str] | None = Field(default=None)
     question_permalink: str | None = Field(default=None, max_length=1000)
     thread_permalink: str | None = Field(default=None, max_length=1000)
     answer_permalink: str | None = Field(default=None, max_length=1000)
@@ -128,6 +133,10 @@ class DiscordAnswerRequest(BaseModel):
             raise ValueError("Either reply_to_message_id or thread_id must be provided")
         self.reply_to_message_id = reply_to or None
         self.thread_id = thread_id or None
+        # Normalize role id aliases coming from discord/n8n payloads.
+        if not self.author_role_ids and self.member_role_ids:
+            self.author_role_ids = self.member_role_ids
+        self.author_role_ids = [str(role).strip() for role in (self.author_role_ids or []) if str(role).strip()]
         return self
 
 
@@ -187,6 +196,36 @@ def _require_session(ask_session: str | None = None, request: Request | None = N
     if session is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
     return session
+
+
+def _set_csrf_cookie(response: Response, *, secure: bool) -> str:
+    token = secrets.token_urlsafe(32)
+    response.set_cookie(
+        key=ASK_CSRF_COOKIE_NAME,
+        value=token,
+        httponly=False,
+        samesite="lax",
+        secure=secure,
+        max_age=ASK_SESSION_MAX_AGE_SECONDS,
+        expires=ASK_SESSION_MAX_AGE_SECONDS,
+        path="/",
+    )
+    return token
+
+
+def _require_csrf(
+    x_csrf_token: str = Header(default="", alias="X-CSRF-Token"),
+    ask_csrf: str | None = Cookie(default=None, alias=ASK_CSRF_COOKIE_NAME),
+) -> None:
+    cookie_token = (ask_csrf or "").strip()
+    header_token = (x_csrf_token or "").strip()
+    if not cookie_token or not header_token or not hmac.compare_digest(header_token, cookie_token):
+        logger.warning(
+            "ask_csrf_rejected reason=token_mismatch cookie_present=%s header_present=%s",
+            bool(cookie_token),
+            bool(header_token),
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid CSRF token")
 
 
 def _public_question_status(question_row: dict[str, Any]) -> str:
@@ -351,10 +390,61 @@ def _require_n8n_token(x_n8n_token: str = Header(default="", alias="X-N8N-TOKEN"
     """Validate n8n shared token for Discord integration endpoints."""
     n8n_token = os.getenv("N8N_TOKEN", "")
     if not n8n_token or not hmac.compare_digest(x_n8n_token, n8n_token):
+        logger.warning("ask_webhook_rejected reason=invalid_n8n_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid n8n token",
         )
+
+
+async def _require_webhook_size_limit(request: Request) -> None:
+    limit = max(ASK_WEBHOOK_MAX_BYTES, 1024)
+    content_length_header = (request.headers.get("content-length") or "").strip()
+    if content_length_header:
+        try:
+            content_length = int(content_length_header)
+        except ValueError:
+            logger.warning(
+                "ask_webhook_rejected reason=invalid_content_length path=%s header=%s",
+                request.url.path,
+                content_length_header[:64],
+            )
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid Content-Length")
+        if content_length > limit:
+            logger.warning(
+                "ask_webhook_rejected reason=payload_too_large path=%s content_length=%d limit=%d",
+                request.url.path,
+                content_length,
+                limit,
+            )
+            raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Payload too large")
+        return
+
+    body = await request.body()
+    if len(body) > limit:
+        logger.warning(
+            "ask_webhook_rejected reason=payload_too_large path=%s body_len=%d limit=%d",
+            request.url.path,
+            len(body),
+            limit,
+        )
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Payload too large")
+
+
+def _is_admin_override_token(token: str) -> bool:
+    candidate = (token or "").strip()
+    admin_token = os.getenv("ADMIN_TOKEN", "").strip()
+    if not candidate or not admin_token:
+        return False
+    return hmac.compare_digest(candidate, admin_token)
+
+
+def _has_support_role(role_ids: list[str]) -> bool:
+    required_role = os.getenv("DISCORD_SUPPORT_ROLE_ID", "").strip()
+    if not required_role:
+        return True
+    normalized = {role_id.strip() for role_id in role_ids if role_id and role_id.strip()}
+    return required_role in normalized
 
 
 def _discord_placeholder_email(author_id: str | None) -> str:
@@ -507,14 +597,23 @@ def _build_discord_answer_email(
 
 async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
     """Accept role-gated Discord human answer from bot listener."""
+    message_id = (payload.get("message_id") or "").strip()
     thread_id = (payload.get("thread_id") or "").strip()
     reply_to_message_id = (payload.get("reply_to_message_id") or "").strip()
     if not thread_id and not reply_to_message_id:
+        logger.info(
+            "ask_discord_answer_rejected reason=no_reference source=discord_bot message_id=%s",
+            message_id or "unknown",
+        )
         return
     if not thread_id:
         thread_id = ""
     answer_text = (payload.get("content") or "").strip()
     if not answer_text:
+        logger.info(
+            "ask_discord_answer_rejected reason=empty_content source=discord_bot message_id=%s",
+            message_id or "unknown",
+        )
         return
 
     def _apply_human_answer():
@@ -530,8 +629,10 @@ async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
                     "SELECT * FROM questions WHERE discord_message_id = ? ORDER BY id DESC LIMIT 1",
                     (reply_to_message_id,),
                 ).fetchone()
-            if not question or question["answer_text"]:
-                return None
+            if not question:
+                return None, "question_not_found"
+            if question["answer_text"]:
+                return None, "already_answered"
 
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -553,13 +654,24 @@ async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
             )
             if conn.execute("SELECT changes()").fetchone()[0] == 0:
                 conn.rollback()
-                return None
+                return None, "update_conflict"
             conn.commit()
-            return question["id"]
+            return question["id"], None
 
-    question_id = await asyncio.to_thread(_apply_human_answer)
+    question_id, reject_reason = await asyncio.to_thread(_apply_human_answer)
     if question_id is None:
+        logger.info(
+            "ask_discord_answer_rejected reason=%s source=discord_bot thread_id=%s reply_to_message_id=%s",
+            reject_reason or "unknown",
+            thread_id or "none",
+            reply_to_message_id or "none",
+        )
         return
+    logger.info(
+        "ask_discord_answer_accepted source=discord_bot question_id=%s message_id=%s",
+        question_id,
+        message_id or "unknown",
+    )
     await _publish_status_value(question_id, "answered", extra={"answered_by": "human"})
     await _publish_answer(question_id)
     await _publish_snapshot(question_id)
@@ -840,26 +952,39 @@ async def auth_callback(
         httponly=True,
         samesite="lax",
         secure=base_public_url.startswith("https"),
-        max_age=86400,
+        max_age=ASK_SESSION_MAX_AGE_SECONDS,
+        expires=ASK_SESSION_MAX_AGE_SECONDS,
         path="/",
     )
+    _set_csrf_cookie(response, secure=base_public_url.startswith("https"))
+    logger.info("ask_auth_login_success user_id=%s", user_row["id"])
     return response
 
 
 @router.post("/auth/logout")
-async def auth_logout(ask_session: str | None = Cookie(default=None)):
+async def auth_logout(
+    ask_session: str | None = Cookie(default=None),
+    _: None = Depends(_require_csrf),
+):
     """Clear the session."""
+    removed = False
     if ask_session:
-        _sessions.pop(ask_session, None)
+        removed = _sessions.pop(ask_session, None) is not None
     response = Response(status_code=status.HTTP_200_OK, content='{"ok": true}')
     response.headers["Content-Type"] = "application/json"
     response.delete_cookie(key="ask_session", path="/")
+    response.delete_cookie(key=ASK_CSRF_COOKIE_NAME, path="/")
+    logger.info("ask_auth_logout session_removed=%s", removed)
     return response
 
 
 # --- User Endpoints ---
 @router.get("/me")
-async def get_me(ask_session: str | None = Cookie(default=None)):
+async def get_me(
+    request: Request,
+    response: Response,
+    ask_session: str | None = Cookie(default=None),
+):
     """Return current user info and points balance."""
     session = _require_session(ask_session)
     user_id = session["user_id"]
@@ -873,6 +998,8 @@ async def get_me(ask_session: str | None = Cookie(default=None)):
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
 
+    secure_cookie = _get_public_base_url(request).startswith("https")
+    _set_csrf_cookie(response, secure=secure_cookie)
     return UserResponse(
         id=user["id"],
         name=user["name"],
@@ -887,6 +1014,7 @@ async def get_me(ask_session: str | None = Cookie(default=None)):
 async def submit_question(
     body: QuestionRequest,
     ask_session: str | None = Cookie(default=None),
+    _: None = Depends(_require_csrf),
 ):
     """Submit a question. Deducts points only when ASK_POINTS_ENABLED is true."""
     session = _require_session(ask_session)
@@ -994,6 +1122,12 @@ async def submit_question(
             },
         )
     await _publish_snapshot(result["question_id"])
+    logger.info(
+        "ask_question_submitted user_id=%s question_id=%s discord_notified=%s",
+        user_id,
+        result["question_id"],
+        discord_result.delivered,
+    )
 
     return {
         "question_id": result["question_id"],
@@ -1066,7 +1200,7 @@ async def question_events_stream(question_id: int, request: Request):
         _event_stream(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
@@ -1077,6 +1211,7 @@ async def question_events_stream(question_id: int, request: Request):
 async def upsert_discord_question(
     body: DiscordQuestionRequest,
     _: None = Depends(_require_n8n_token),
+    __: None = Depends(_require_webhook_size_limit),
 ):
     """Upsert a question record from a Discord message for n8n."""
 
@@ -1167,8 +1302,19 @@ async def upsert_discord_question(
 async def attach_discord_answer(
     body: DiscordAnswerRequest,
     _: None = Depends(_require_n8n_token),
+    __: None = Depends(_require_webhook_size_limit),
+    x_admin_override: str = Header(default="", alias="X-ADMIN-OVERRIDE"),
 ):
     """Attach a Discord answer to a question, then email it."""
+    role_ids = body.author_role_ids or []
+    if not _has_support_role(role_ids):
+        logger.warning(
+            "ask_discord_answer_rejected reason=missing_support_role source=n8n reply_to_message_id=%s thread_id=%s",
+            body.reply_to_message_id or "none",
+            body.thread_id or "none",
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Support role required")
+    admin_override = _is_admin_override_token(x_admin_override)
 
     def _attach():
         with get_db() as conn:
@@ -1185,7 +1331,9 @@ async def attach_discord_answer(
                 ).fetchone()
 
             if question is None:
-                return None, "Question not found"
+                return None, "Question not found", status.HTTP_404_NOT_FOUND
+            if question["answer_text"] and not admin_override:
+                return None, "Question already answered", status.HTTP_409_CONFLICT
 
             now = datetime.now(timezone.utc).isoformat()
             conn.execute(
@@ -1194,7 +1342,7 @@ async def attach_discord_answer(
                 "discord_thread_id = COALESCE(?, discord_thread_id), "
                 "discord_guild_id = COALESCE(?, discord_guild_id), "
                 "discord_channel_id = COALESCE(?, discord_channel_id) "
-                "WHERE id = ?",
+                "WHERE id = ? " + ("" if admin_override else "AND answer_text IS NULL"),
                 (
                     body.answer_text,
                     now,
@@ -1205,12 +1353,22 @@ async def attach_discord_answer(
                     question["id"],
                 ),
             )
+            if conn.execute("SELECT changes()").fetchone()[0] == 0:
+                conn.rollback()
+                return None, "Question already answered", status.HTTP_409_CONFLICT
             conn.commit()
-            return dict(question), None
+            return dict(question), None, status.HTTP_200_OK
 
-    question_data, error = await asyncio.to_thread(_attach)
+    question_data, error, status_code = await asyncio.to_thread(_attach)
     if error:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=error)
+        logger.info(
+            "ask_discord_answer_rejected reason=%s source=n8n reply_to_message_id=%s thread_id=%s admin_override=%s",
+            error,
+            body.reply_to_message_id or "none",
+            body.thread_id or "none",
+            admin_override,
+        )
+        raise HTTPException(status_code=status_code, detail=error)
 
     subject, text_body, html_body = _build_discord_answer_email(
         to_name=question_data["name"] or "there",
@@ -1232,6 +1390,11 @@ async def attach_discord_answer(
     if not email_ok:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send answer email")
 
+    logger.info(
+        "ask_discord_answer_accepted source=n8n question_id=%s admin_override=%s",
+        question_data["id"],
+        admin_override,
+    )
     await _publish_status_value(int(question_data["id"]), "answered", extra={"answered_by": "human"})
     await _publish_answer(int(question_data["id"]))
     await _publish_snapshot(int(question_data["id"]))
@@ -1244,13 +1407,18 @@ async def attach_discord_answer(
 
 # --- Answer Endpoint (webhook from Marc / n8n) ---
 @router.post("/answers")
-async def submit_answer(body: AnswerRequest, request: Request):
+async def submit_answer(
+    body: AnswerRequest,
+    request: Request,
+    _: None = Depends(_require_webhook_size_limit),
+):
     """Accept an answer for a question. Secured by shared secret header."""
     if not ASK_ANSWER_WEBHOOK_SECRET:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Answer webhook not configured")
 
     secret_header = request.headers.get("X-Webhook-Secret", "")
     if not hmac.compare_digest(secret_header, ASK_ANSWER_WEBHOOK_SECRET):
+        logger.warning("ask_webhook_rejected reason=invalid_answer_webhook_secret path=/api/ask/answers")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid webhook secret")
 
     def _answer_question():
@@ -1287,6 +1455,7 @@ async def submit_answer(body: AnswerRequest, request: Request):
     await _publish_status_value(body.question_id, "answered", extra={"answered_by": "human"})
     await _publish_answer(body.question_id)
     await _publish_snapshot(body.question_id)
+    logger.info("ask_webhook_answer_applied question_id=%s", body.question_id)
 
     return {
         "question_id": body.question_id,

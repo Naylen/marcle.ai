@@ -326,7 +326,14 @@ if config.CORS_ORIGINS:
         CORSMiddleware,
         allow_origins=config.CORS_ORIGINS,
         allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type", "X-Webhook-Secret", "X-N8N-TOKEN"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Webhook-Secret",
+            "X-N8N-TOKEN",
+            "X-CSRF-Token",
+            "X-ADMIN-OVERRIDE",
+        ],
     )
 
 # --- Include Ask router ---

@@ -90,6 +90,32 @@ def _extract_text_content(data: dict) -> str:
     return ""
 
 
+def _normalize_messages(messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    if not messages:
+        raise LLMClientError("At least one message is required")
+
+    normalized: list[dict[str, str]] = []
+    for item in messages:
+        role = str(item.get("role", "")).strip()
+        content = str(item.get("content", "")).strip()
+        if not role or not content:
+            continue
+        normalized.append({"role": role, "content": content})
+
+    if not normalized:
+        raise LLMClientError("No valid messages provided")
+
+    system_indexes = [index for index, item in enumerate(normalized) if item.get("role") == "system"]
+    if not system_indexes:
+        raise LLMClientError("System message is required and must be first in payload")
+
+    first_system_index = system_indexes[0]
+    if first_system_index != 0:
+        system_message = normalized.pop(first_system_index)
+        normalized.insert(0, system_message)
+    return normalized
+
+
 async def call_openai_compatible(
     *,
     base_url: str,
@@ -97,6 +123,8 @@ async def call_openai_compatible(
     model: str,
     messages: list[dict[str, str]],
     timeout_seconds: float,
+    temperature: float = 0.3,
+    max_tokens: int = 600,
 ) -> str:
     """Call an OpenAI-compatible chat-completions endpoint and return output text."""
     if not model.strip():
@@ -106,10 +134,14 @@ async def call_openai_compatible(
     headers = {"Content-Type": "application/json"}
     if api_key and api_key.strip():
         headers["Authorization"] = f"Bearer {api_key.strip()}"
+    normalized_messages = _normalize_messages(messages)
+    safe_temperature = max(0.0, min(float(temperature), 2.0))
+    safe_max_tokens = max(1, min(int(max_tokens), 4000))
     payload = {
         "model": model.strip(),
-        "messages": messages,
-        "temperature": 0.2,
+        "messages": normalized_messages,
+        "temperature": safe_temperature,
+        "max_tokens": safe_max_tokens,
     }
 
     timeout = httpx.Timeout(max(float(timeout_seconds), 1.0))

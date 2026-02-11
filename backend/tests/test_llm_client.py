@@ -1,6 +1,6 @@
 import pytest
 
-from app.ask_services.llm_client import LLMClientError, build_chat_completion_urls
+from app.ask_services.llm_client import LLMClientError, _normalize_messages, build_chat_completion_urls
 
 
 def test_build_chat_completion_urls_from_root():
@@ -25,3 +25,19 @@ def test_build_chat_completion_urls_invalid():
     with pytest.raises(LLMClientError):
         build_chat_completion_urls("")
 
+
+def test_normalize_messages_moves_system_to_front():
+    normalized = _normalize_messages(
+        [
+            {"role": "user", "content": "Question"},
+            {"role": "system", "content": "System rules"},
+        ]
+    )
+
+    assert normalized[0]["role"] == "system"
+    assert normalized[1]["role"] == "user"
+
+
+def test_normalize_messages_requires_system():
+    with pytest.raises(LLMClientError):
+        _normalize_messages([{"role": "user", "content": "Question"}])
