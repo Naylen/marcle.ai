@@ -72,3 +72,12 @@ N8N_URL: str = os.getenv("N8N_URL", "")
 
 # Ask feature flags
 ASK_POINTS_ENABLED: bool = _env_bool("ASK_POINTS_ENABLED", False)
+
+# Ask staged fallback
+ASK_HUMAN_WAIT_SECONDS: int = int(os.getenv("ASK_HUMAN_WAIT_SECONDS", os.getenv("ASK_FALLBACK_SECONDS", "300")))
+ASK_OPENAI_WAIT_SECONDS: int = int(os.getenv("ASK_OPENAI_WAIT_SECONDS", "600"))
+LOCAL_LLM_BASE_URL: str = os.getenv("LOCAL_LLM_BASE_URL", "http://172.16.2.220:12434/engines/v1")
+LOCAL_LLM_API_KEY: str = os.getenv("LOCAL_LLM_API_KEY", "not-needed")
+LOCAL_LLM_MODEL: str = os.getenv("LOCAL_LLM_MODEL", "ai/llama3.2:latest")
+LOCAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "90"))
+OPENAI_TIMEOUT_SECONDS: float = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "600"))

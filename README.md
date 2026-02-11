@@ -141,8 +141,8 @@ Flow:
 3. User submits a question (points are deducted atomically)
 4. Backend posts the question to Discord and attempts to open a question thread
 5. Ask UI subscribes to SSE (`/api/ask/questions/{id}/events`) for live status/answer updates
-6. If a Discord user with `DISCORD_SUPPORT_ROLE_ID` replies in the thread first, backend stores that human answer
-7. If no answer arrives by `ASK_FALLBACK_SECONDS` (default 300), backend generates an LLM answer and posts it to Discord
+6. If a Discord user with `DISCORD_SUPPORT_ROLE_ID` replies in the thread or replies to the bot question message in-channel first, backend stores that human answer
+7. If no answer arrives by `ASK_HUMAN_WAIT_SECONDS` (default 300), backend tries local LLM first; if still unanswered by `ASK_OPENAI_WAIT_SECONDS` (default 600), backend tries OpenAI fallback
 8. SSE pushes `status`/`answer`/`snapshot` events to the user in real time
 
 Session/auth model for Ask user routes:
@@ -158,8 +158,8 @@ Features implemented:
 - Per-user in-memory rate limit (5 questions / 60s)
 - Points system (feature-flag controlled via ASK_POINTS_ENABLED; currently disabled by default)
 - SSE stream endpoint for per-question updates
-- Discord role-gated human answer ingestion (thread messages only)
-- LLM fallback answer worker after deadline
+- Discord role-gated human answer ingestion (thread messages + in-channel replies to the bot question)
+- Two-stage fallback worker (local LLM first, OpenAI second)
 - Ask admin endpoints for listing users and adjusting points
 
 ## API Reference
@@ -229,9 +229,10 @@ Use `.env.example` as source of truth. Important groups:
 - Security/admin: `ADMIN_TOKEN`, `EXPOSE_SERVICE_URLS`, `CORS_ORIGINS`
 - Flapping/incident behavior: `FLAP_WINDOW_SECONDS`, `FLAP_THRESHOLD`, `OBSERVATIONS_HISTORY_LIMIT`
 - Ask OAuth/session/webhook/mail: `GOOGLE_*`, `SESSION_SECRET`, `ASK_ANSWER_WEBHOOK_SECRET`, `DISCORD_WEBHOOK_URL`, `SMTP_*`, `BASE_PUBLIC_URL`, `ASK_POINTS_ENABLED`
-- Ask Discord + fallback worker: `DISCORD_BOT_TOKEN`, `DISCORD_SUPPORT_ROLE_ID`, `ASK_FALLBACK_SECONDS`
+- Ask Discord + fallback worker: `DISCORD_BOT_TOKEN`, `DISCORD_ASK_CHANNEL_ID`, `DISCORD_GUILD_ID`, `DISCORD_SUPPORT_ROLE_ID`, `ASK_HUMAN_WAIT_SECONDS`, `ASK_OPENAI_WAIT_SECONDS`
 - Ask n8n integration: `N8N_TOKEN`
-- Ask LLM fallback: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`
+- Ask LLM fallback: local (`LOCAL_LLM_BASE_URL`, `LOCAL_LLM_API_KEY`, `LOCAL_LLM_MODEL`, `LOCAL_LLM_TIMEOUT_SECONDS`) and OpenAI (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_TIMEOUT_SECONDS`)
+  - Docker Model Runner base URL should use OpenAI-compatible path style, for example `http://172.16.2.220:12434/engines/v1`
 
 Notes:
 

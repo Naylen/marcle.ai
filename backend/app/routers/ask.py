@@ -25,7 +25,7 @@ from app.ask_db import (
 )
 from app.ask_services.discord import post_question_to_discord
 from app.ask_services.email import send_answer_email, send_custom_email
-from app.ask_services.llm import generate_answer_text
+from app.ask_services.llm import generate_local_answer_text, generate_openai_answer_text
 from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
 from app.discord_client import post_answer_to_discord
 
@@ -37,7 +37,8 @@ router = APIRouter(prefix="/api/ask", tags=["ask"])
 SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production")
 ASK_ANSWER_WEBHOOK_SECRET: str = os.getenv("ASK_ANSWER_WEBHOOK_SECRET", "")
 BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
-ASK_FALLBACK_SECONDS: int = int(os.getenv("ASK_FALLBACK_SECONDS", "300"))
+ASK_HUMAN_WAIT_SECONDS: int = max(int(app_config.ASK_HUMAN_WAIT_SECONDS), 1)
+ASK_OPENAI_WAIT_SECONDS: int = max(int(app_config.ASK_OPENAI_WAIT_SECONDS), ASK_HUMAN_WAIT_SECONDS)
 ASK_FALLBACK_SWEEP_SECONDS: int = int(os.getenv("ASK_FALLBACK_SWEEP_SECONDS", "10"))
 ASK_POINTS_ENABLED: bool = app_config.ASK_POINTS_ENABLED
 
@@ -371,6 +372,68 @@ def _question_preview(question_text: str, limit: int = 72) -> str:
     return f"{collapsed[: limit - 3]}..."
 
 
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate = f"{candidate[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _build_deadlines(created_at: datetime) -> tuple[datetime, datetime]:
+    human_deadline_at = created_at + timedelta(seconds=ASK_HUMAN_WAIT_SECONDS)
+    openai_deadline_at = created_at + timedelta(seconds=ASK_OPENAI_WAIT_SECONDS)
+    if openai_deadline_at < human_deadline_at:
+        openai_deadline_at = human_deadline_at
+    return human_deadline_at, openai_deadline_at
+
+
+def _resolve_deadlines(question_row: dict[str, Any]) -> tuple[datetime, datetime]:
+    created_at = _parse_datetime(str(question_row.get("created_at") or "")) or datetime.now(timezone.utc)
+    default_human_deadline, default_openai_deadline = _build_deadlines(created_at)
+    legacy_deadline = _parse_datetime(str(question_row.get("deadline_at") or ""))
+    human_deadline = (
+        _parse_datetime(str(question_row.get("human_deadline_at") or ""))
+        or legacy_deadline
+        or default_human_deadline
+    )
+    openai_deadline = _parse_datetime(str(question_row.get("openai_deadline_at") or "")) or default_openai_deadline
+    if openai_deadline < human_deadline:
+        openai_deadline = human_deadline
+    return human_deadline, openai_deadline
+
+
+async def _publish_status_value(
+    question_id: int,
+    status_value: str,
+    *,
+    detail: str | None = None,
+    extra: dict[str, Any] | None = None,
+) -> None:
+    row = await asyncio.to_thread(_fetch_question_by_id_sync, question_id)
+    payload: dict[str, Any] = {"status": status_value}
+    if row is not None:
+        payload["deadline_at"] = row.get("deadline_at")
+    if detail:
+        payload["detail"] = detail[:300]
+    if extra:
+        payload.update(extra)
+    await _publish_question_event(question_id, "status", payload)
+
+
+async def _publish_failure_status(question_id: int, status_value: str, *, detail: str | None = None) -> None:
+    await _publish_status_value(question_id, status_value, detail=detail)
+
+
 def _build_discord_answer_email(
     *,
     to_name: str,
@@ -445,18 +508,28 @@ def _build_discord_answer_email(
 async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
     """Accept role-gated Discord human answer from bot listener."""
     thread_id = (payload.get("thread_id") or "").strip()
-    if not thread_id:
+    reply_to_message_id = (payload.get("reply_to_message_id") or "").strip()
+    if not thread_id and not reply_to_message_id:
         return
+    if not thread_id:
+        thread_id = ""
     answer_text = (payload.get("content") or "").strip()
     if not answer_text:
         return
 
     def _apply_human_answer():
         with get_db() as conn:
-            question = conn.execute(
-                "SELECT * FROM questions WHERE discord_thread_id = ? ORDER BY id DESC LIMIT 1",
-                (thread_id,),
-            ).fetchone()
+            question = None
+            if thread_id:
+                question = conn.execute(
+                    "SELECT * FROM questions WHERE discord_thread_id = ? ORDER BY id DESC LIMIT 1",
+                    (thread_id,),
+                ).fetchone()
+            if question is None and reply_to_message_id:
+                question = conn.execute(
+                    "SELECT * FROM questions WHERE discord_message_id = ? ORDER BY id DESC LIMIT 1",
+                    (reply_to_message_id,),
+                ).fetchone()
             if not question or question["answer_text"]:
                 return None
 
@@ -464,6 +537,7 @@ async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
             conn.execute(
                 "UPDATE questions SET answer_text = ?, answered_at = ?, answered_by = 'human', status = 'answered', "
                 "discord_answer_message_id = ?, "
+                "discord_thread_id = COALESCE(?, discord_thread_id), "
                 "discord_guild_id = COALESCE(?, discord_guild_id), "
                 "discord_channel_id = COALESCE(?, discord_channel_id) "
                 "WHERE id = ? AND answer_text IS NULL",
@@ -471,6 +545,7 @@ async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
                     answer_text,
                     now,
                     payload.get("message_id"),
+                    thread_id or None,
                     payload.get("guild_id"),
                     payload.get("channel_id"),
                     question["id"],
@@ -485,72 +560,142 @@ async def _handle_discord_human_answer(payload: dict[str, str]) -> None:
     question_id = await asyncio.to_thread(_apply_human_answer)
     if question_id is None:
         return
+    await _publish_status_value(question_id, "answered", extra={"answered_by": "human"})
     await _publish_answer(question_id)
     await _publish_snapshot(question_id)
 
 
 async def _process_fallback_candidates_once() -> None:
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
 
     def _fetch_candidates():
         with get_db() as conn:
             rows = conn.execute(
-                "SELECT id, question_text, discord_thread_id, discord_channel_id, discord_message_id "
+                "SELECT id, question_text, created_at, deadline_at, human_deadline_at, openai_deadline_at, "
+                "local_llm_attempted_at, openai_attempted_at, discord_thread_id, discord_channel_id, discord_message_id "
                 "FROM questions "
-                "WHERE answer_text IS NULL "
-                "  AND deadline_at IS NOT NULL "
-                "  AND datetime(deadline_at) <= datetime(?) "
-                "  AND status = 'pending' "
-                "ORDER BY deadline_at ASC "
-                "LIMIT 25",
-                (now_iso,),
+                "WHERE answer_text IS NULL AND status = 'pending' "
+                "ORDER BY created_at ASC "
+                "LIMIT 100"
             ).fetchall()
             return [dict(r) for r in rows]
+
+    def _claim_stage(question_id: int, stage: str, human_deadline_iso: str, openai_deadline_iso: str) -> bool:
+        with get_db() as conn:
+            if stage == "local":
+                conn.execute(
+                    "UPDATE questions "
+                    "SET local_llm_attempted_at = ?, "
+                    "human_deadline_at = COALESCE(human_deadline_at, ?), "
+                    "openai_deadline_at = COALESCE(openai_deadline_at, ?), "
+                    "deadline_at = COALESCE(deadline_at, ?) "
+                    "WHERE id = ? AND answer_text IS NULL AND status = 'pending' AND local_llm_attempted_at IS NULL",
+                    (now_iso, human_deadline_iso, openai_deadline_iso, human_deadline_iso, question_id),
+                )
+            else:
+                conn.execute(
+                    "UPDATE questions "
+                    "SET openai_attempted_at = ?, "
+                    "openai_deadline_at = COALESCE(openai_deadline_at, ?), "
+                    "deadline_at = COALESCE(openai_deadline_at, ?) "
+                    "WHERE id = ? AND answer_text IS NULL AND status = 'pending' "
+                    "AND local_llm_attempted_at IS NOT NULL AND openai_attempted_at IS NULL",
+                    (now_iso, openai_deadline_iso, openai_deadline_iso, question_id),
+                )
+            changed = conn.execute("SELECT changes()").fetchone()[0]
+            conn.commit()
+            return changed > 0
+
+    def _save_answer(question_id: int, answer_text: str, answered_by: str) -> bool:
+        answered_at = datetime.now(timezone.utc).isoformat()
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE questions "
+                "SET answer_text = ?, answered_at = ?, answered_by = ?, status = 'answered' "
+                "WHERE id = ? AND answer_text IS NULL AND status = 'pending'",
+                (answer_text, answered_at, answered_by, question_id),
+            )
+            changed = conn.execute("SELECT changes()").fetchone()[0]
+            conn.commit()
+            return changed > 0
+
+    def _set_pending_deadline(question_id: int, deadline_at_iso: str) -> None:
+        with get_db() as conn:
+            conn.execute(
+                "UPDATE questions SET deadline_at = ?, openai_deadline_at = COALESCE(openai_deadline_at, ?) "
+                "WHERE id = ? AND answer_text IS NULL AND status = 'pending'",
+                (deadline_at_iso, deadline_at_iso, question_id),
+            )
+            conn.commit()
 
     candidates = await asyncio.to_thread(_fetch_candidates)
     for candidate in candidates:
         question_id = int(candidate["id"])
         if question_id in _llm_inflight_question_ids:
             continue
+
+        human_deadline_at, openai_deadline_at = _resolve_deadlines(candidate)
+        local_attempted = bool((candidate.get("local_llm_attempted_at") or "").strip())
+        openai_attempted = bool((candidate.get("openai_attempted_at") or "").strip())
+
+        stage: str | None = None
+        if not local_attempted and now >= human_deadline_at:
+            stage = "local"
+        elif local_attempted and not openai_attempted and now >= openai_deadline_at:
+            stage = "openai"
+        if stage is None:
+            continue
+
         _llm_inflight_question_ids.add(question_id)
         try:
-            def _claim():
-                with get_db() as conn:
-                    conn.execute(
-                        "UPDATE questions "
-                        "SET answered_by = 'llm' "
-                        "WHERE id = ? AND answer_text IS NULL AND (answered_by IS NULL OR answered_by = 'llm')",
-                        (question_id,),
-                    )
-                    changed = conn.execute("SELECT changes()").fetchone()[0]
-                    conn.commit()
-                    return changed > 0
-
-            claimed = await asyncio.to_thread(_claim)
+            claimed = await asyncio.to_thread(
+                _claim_stage,
+                question_id,
+                stage,
+                human_deadline_at.isoformat(),
+                openai_deadline_at.isoformat(),
+            )
             if not claimed:
                 continue
 
-            llm_answer = await generate_answer_text(candidate["question_text"])
-            answered_at = datetime.now(timezone.utc).isoformat()
+            answer_text: str = ""
+            if stage == "local":
+                try:
+                    answer_text = (await generate_local_answer_text(candidate["question_text"])).strip()
+                except Exception as exc:
+                    logger.exception("Local LLM fallback failed for question_id=%s", question_id)
+                    await asyncio.to_thread(_set_pending_deadline, question_id, openai_deadline_at.isoformat())
+                    await _publish_failure_status(question_id, "local_llm_failed", detail=str(exc))
+                    await _publish_snapshot(question_id)
+                    continue
+                answered_by = "llm_local"
+            else:
+                try:
+                    answer_text = (await generate_openai_answer_text(candidate["question_text"])).strip()
+                except Exception as exc:
+                    logger.exception("OpenAI fallback failed for question_id=%s", question_id)
+                    await _publish_failure_status(question_id, "openai_failed", detail=str(exc))
+                    await _publish_snapshot(question_id)
+                    continue
+                answered_by = "llm_openai"
 
-            def _save_answer():
-                with get_db() as conn:
-                    conn.execute(
-                        "UPDATE questions "
-                        "SET answer_text = ?, answered_at = ?, answered_by = 'llm', status = 'answered' "
-                        "WHERE id = ? AND answer_text IS NULL AND answered_by = 'llm'",
-                        (llm_answer, answered_at, question_id),
-                    )
-                    changed = conn.execute("SELECT changes()").fetchone()[0]
-                    conn.commit()
-                    return changed > 0
+            if not answer_text:
+                if stage == "local":
+                    await asyncio.to_thread(_set_pending_deadline, question_id, openai_deadline_at.isoformat())
+                    await _publish_failure_status(question_id, "local_llm_failed", detail="Model returned empty output")
+                else:
+                    await _publish_failure_status(question_id, "openai_failed", detail="Model returned empty output")
+                await _publish_snapshot(question_id)
+                continue
 
-            stored = await asyncio.to_thread(_save_answer)
+            stored = await asyncio.to_thread(_save_answer, question_id, answer_text, answered_by)
             if not stored:
                 continue
 
+            await _publish_status_value(question_id, "answered", extra={"answered_by": answered_by})
             await post_answer_to_discord(
-                answer_text=llm_answer,
+                answer_text=answer_text,
                 thread_id=candidate.get("discord_thread_id"),
                 channel_id=candidate.get("discord_channel_id"),
                 reply_to_message_id=candidate.get("discord_message_id"),
@@ -558,7 +703,7 @@ async def _process_fallback_candidates_once() -> None:
             await _publish_answer(question_id)
             await _publish_snapshot(question_id)
         except Exception:
-            logger.exception("Failed processing Ask LLM fallback for question_id=%s", question_id)
+            logger.exception("Failed processing Ask fallback for question_id=%s", question_id)
         finally:
             _llm_inflight_question_ids.discard(question_id)
 
@@ -773,11 +918,19 @@ async def submit_question(
                     return None, "Insufficient points (race)"
 
             created_at = datetime.now(timezone.utc)
-            deadline_at = created_at + timedelta(seconds=max(ASK_FALLBACK_SECONDS, 1))
+            human_deadline_at, openai_deadline_at = _build_deadlines(created_at)
             cursor = conn.execute(
-                "INSERT INTO questions (user_id, question_text, points_spent, status, created_at, deadline_at) "
-                "VALUES (?, ?, ?, 'pending', ?, ?)",
-                (user_id, body.question_text, points_spent, created_at.isoformat(), deadline_at.isoformat()),
+                "INSERT INTO questions (user_id, question_text, points_spent, status, created_at, deadline_at, human_deadline_at, openai_deadline_at) "
+                "VALUES (?, ?, ?, 'pending', ?, ?, ?, ?)",
+                (
+                    user_id,
+                    body.question_text,
+                    points_spent,
+                    created_at.isoformat(),
+                    human_deadline_at.isoformat(),
+                    human_deadline_at.isoformat(),
+                    openai_deadline_at.isoformat(),
+                ),
             )
             conn.commit()
 
@@ -789,7 +942,7 @@ async def submit_question(
                 "user_name": user["name"],
                 "user_email": user["email"],
                 "remaining_points": remaining_points,
-                "deadline_at": deadline_at.isoformat(),
+                "deadline_at": human_deadline_at.isoformat(),
                 "points_spent": points_spent,
             }, None
 
@@ -831,6 +984,15 @@ async def submit_question(
 
     await asyncio.to_thread(_mark_discord)
     await _publish_status(result["question_id"])
+    if discord_result.delivered:
+        await _publish_status_value(
+            result["question_id"],
+            "posted_to_discord",
+            extra={
+                "discord_message_id": discord_result.message_id,
+                "discord_thread_id": discord_result.thread_id,
+            },
+        )
     await _publish_snapshot(result["question_id"])
 
     return {
@@ -920,8 +1082,9 @@ async def upsert_discord_question(
 
     def _upsert():
         with get_db() as conn:
-            now = datetime.now(timezone.utc).isoformat()
-            deadline_at = (datetime.now(timezone.utc) + timedelta(seconds=max(ASK_FALLBACK_SECONDS, 1))).isoformat()
+            created_at = datetime.now(timezone.utc)
+            now = created_at.isoformat()
+            human_deadline_at, openai_deadline_at = _build_deadlines(created_at)
             author_id = (body.author_id or "").strip() or "unknown"
             author_name = (body.author_name or f"Discord User {author_id}").strip()[:255]
             author_email = (body.author_email or _discord_placeholder_email(author_id)).strip()[:320]
@@ -953,7 +1116,9 @@ async def upsert_discord_question(
                     "UPDATE questions "
                     "SET user_id = ?, question_text = ?, discord_guild_id = ?, discord_channel_id = ?, discord_thread_id = ?, "
                     "status = CASE WHEN answer_text IS NULL THEN 'pending' ELSE status END, "
-                    "deadline_at = CASE WHEN answer_text IS NULL THEN COALESCE(deadline_at, ?) ELSE deadline_at END "
+                    "deadline_at = CASE WHEN answer_text IS NULL THEN COALESCE(deadline_at, ?) ELSE deadline_at END, "
+                    "human_deadline_at = CASE WHEN answer_text IS NULL THEN COALESCE(human_deadline_at, ?) ELSE human_deadline_at END, "
+                    "openai_deadline_at = CASE WHEN answer_text IS NULL THEN COALESCE(openai_deadline_at, ?) ELSE openai_deadline_at END "
                     "WHERE id = ?",
                     (
                         user_id,
@@ -961,7 +1126,9 @@ async def upsert_discord_question(
                         body.discord_guild_id,
                         body.discord_channel_id,
                         body.discord_thread_id,
-                        deadline_at,
+                        human_deadline_at.isoformat(),
+                        human_deadline_at.isoformat(),
+                        openai_deadline_at.isoformat(),
                         existing["id"],
                     ),
                 )
@@ -969,8 +1136,8 @@ async def upsert_discord_question(
                 return existing["id"], "updated"
 
             cursor = conn.execute(
-                "INSERT INTO questions (user_id, question_text, points_spent, status, discord_sent, discord_guild_id, discord_channel_id, discord_message_id, discord_thread_id, deadline_at) "
-                "VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, ?, ?)",
+                "INSERT INTO questions (user_id, question_text, points_spent, status, discord_sent, discord_guild_id, discord_channel_id, discord_message_id, discord_thread_id, deadline_at, human_deadline_at, openai_deadline_at) "
+                "VALUES (?, ?, ?, 'pending', 1, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     user_id,
                     body.content,
@@ -979,7 +1146,9 @@ async def upsert_discord_question(
                     body.discord_channel_id,
                     body.discord_message_id,
                     body.discord_thread_id,
-                    deadline_at,
+                    human_deadline_at.isoformat(),
+                    human_deadline_at.isoformat(),
+                    openai_deadline_at.isoformat(),
                 ),
             )
             conn.commit()
@@ -1062,6 +1231,7 @@ async def attach_discord_answer(
     if not email_ok:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to send answer email")
 
+    await _publish_status_value(int(question_data["id"]), "answered", extra={"answered_by": "human"})
     await _publish_answer(int(question_data["id"]))
     await _publish_snapshot(int(question_data["id"]))
 
@@ -1113,6 +1283,7 @@ async def submit_answer(body: AnswerRequest, request: Request):
         question_id=body.question_id,
     )
 
+    await _publish_status_value(body.question_id, "answered", extra={"answered_by": "human"})
     await _publish_answer(body.question_id)
     await _publish_snapshot(body.question_id)
 

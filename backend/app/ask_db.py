@@ -35,6 +35,10 @@ CREATE TABLE IF NOT EXISTS questions (
     discord_thread_id TEXT,
     discord_answer_message_id TEXT,
     deadline_at      TEXT,
+    human_deadline_at TEXT,
+    openai_deadline_at TEXT,
+    local_llm_attempted_at TEXT,
+    openai_attempted_at TEXT,
     answered_by      TEXT,
     points_spent    INTEGER NOT NULL DEFAULT {points_per_question},
     status          TEXT    NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'answered', 'failed')),
@@ -64,6 +68,10 @@ def _migrate_questions_table(conn: sqlite3.Connection) -> None:
         ("answer_text", "TEXT"),
         ("answered_at", "TEXT"),
         ("deadline_at", "TEXT"),
+        ("human_deadline_at", "TEXT"),
+        ("openai_deadline_at", "TEXT"),
+        ("local_llm_attempted_at", "TEXT"),
+        ("openai_attempted_at", "TEXT"),
         ("answered_by", "TEXT"),
     ]
 
@@ -82,6 +90,14 @@ def _migrate_questions_table(conn: sqlite3.Connection) -> None:
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_questions_deadline_at "
         "ON questions(deadline_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_questions_human_deadline_at "
+        "ON questions(human_deadline_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_questions_openai_deadline_at "
+        "ON questions(openai_deadline_at)"
     )
 
 

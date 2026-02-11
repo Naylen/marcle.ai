@@ -54,8 +54,6 @@ class AskDiscordClient(discord.Client):  # type: ignore[misc]
             return
         if self._support_role_id <= 0:
             return
-        if not isinstance(message.channel, discord.Thread):
-            return
         if message.guild is None:
             return
 
@@ -70,12 +68,32 @@ class AskDiscordClient(discord.Client):  # type: ignore[misc]
         if all(role.id != self._support_role_id for role in getattr(member, "roles", [])):
             return
 
+        is_thread = isinstance(message.channel, discord.Thread)
+        reference = getattr(message, "reference", None)
+        reply_to_message_id = (
+            str(reference.message_id)
+            if reference is not None and getattr(reference, "message_id", None)
+            else ""
+        )
+        if not is_thread and not reply_to_message_id:
+            return
+
+        if is_thread:
+            channel_id = str(getattr(message.channel, "parent_id", "") or message.channel.id)
+            thread_id = str(message.channel.id)
+        else:
+            channel_id = str(message.channel.id)
+            thread_id = ""
+
+        if not (message.content or "").strip():
+            return
+
         payload = {
             "guild_id": str(message.guild.id),
-            "channel_id": str(getattr(message.channel, "parent_id", "") or message.channel.id),
-            "thread_id": str(message.channel.id),
+            "channel_id": channel_id,
+            "thread_id": thread_id,
             "message_id": str(message.id),
-            "reply_to_message_id": str(message.reference.message_id) if getattr(message, "reference", None) and getattr(message.reference, "message_id", None) else "",
+            "reply_to_message_id": reply_to_message_id,
             "content": message.content or "",
             "author_id": str(member.id),
             "author_name": getattr(member, "display_name", None) or getattr(message.author, "name", ""),
