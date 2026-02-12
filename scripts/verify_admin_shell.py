@@ -128,10 +128,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Verify frontend/admin shell contract.")
     parser.add_argument("--html", default="frontend/admin.html", help="Path to admin HTML shell")
     parser.add_argument("--js", default="frontend/admin.js", help="Path to admin JS")
+    parser.add_argument("--index", default="frontend/index.html", help="Path to public index HTML")
+    parser.add_argument("--nginx", default="frontend/nginx.conf", help="Path to nginx config")
+    parser.add_argument("--dockerfile", default="frontend/Dockerfile", help="Path to frontend Dockerfile")
     args = parser.parse_args()
 
     html_path = pathlib.Path(args.html)
     js_path = pathlib.Path(args.js)
+    index_path = pathlib.Path(args.index)
+    nginx_path = pathlib.Path(args.nginx)
+    dockerfile_path = pathlib.Path(args.dockerfile)
 
     if not html_path.exists():
         print(f"FAIL: Missing HTML file: {html_path}")
@@ -139,9 +145,21 @@ def main() -> int:
     if not js_path.exists():
         print(f"FAIL: Missing JS file: {js_path}")
         return 1
+    if not index_path.exists():
+        print(f"FAIL: Missing index file: {index_path}")
+        return 1
+    if not nginx_path.exists():
+        print(f"FAIL: Missing nginx config file: {nginx_path}")
+        return 1
+    if not dockerfile_path.exists():
+        print(f"FAIL: Missing Dockerfile: {dockerfile_path}")
+        return 1
 
     html_source = html_path.read_text(encoding="utf-8")
     js_source = js_path.read_text(encoding="utf-8")
+    index_source = index_path.read_text(encoding="utf-8")
+    nginx_source = nginx_path.read_text(encoding="utf-8")
+    dockerfile_source = dockerfile_path.read_text(encoding="utf-8")
 
     html_parser = AdminHTMLParser()
     html_parser.feed(html_source)
@@ -184,6 +202,37 @@ def main() -> int:
 
     if stylesheet_node and script_node and stylesheet_node.index > script_node.index:
         failures.append("styles.css link must appear before admin.js script tag")
+
+    index_has_admin_js = bool(
+        re.search(r"<script[^>]+src=[\"'][^\"']*admin\.js[^\"']*[\"']", index_source, flags=re.IGNORECASE)
+    )
+    if index_has_admin_js:
+        failures.append("index.html must not load admin.js")
+
+    nginx_requirements = [
+        "location = /admin {",
+        "location = /admin/ {",
+        "location = /admin/index.html {",
+        "try_files /admin.html =404;",
+        "location = /ask {",
+        "location = /ask/ {",
+        "location /api/ {",
+        "proxy_pass http://backend:8000;",
+    ]
+    for snippet in nginx_requirements:
+        if snippet not in nginx_source:
+            failures.append(f"nginx.conf missing required snippet: {snippet}")
+
+    dockerfile_requirements = [
+        "COPY index.html /usr/share/nginx/html/",
+        "COPY admin.html /usr/share/nginx/html/",
+        "COPY admin.js /usr/share/nginx/html/",
+        "COPY styles.css /usr/share/nginx/html/",
+        "COPY ask/ /usr/share/nginx/html/ask/",
+    ]
+    for snippet in dockerfile_requirements:
+        if snippet not in dockerfile_source:
+            failures.append(f"Dockerfile missing required snippet: {snippet}")
 
     if failures:
         print("FAIL: admin shell verification failed")
