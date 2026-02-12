@@ -1,0 +1,6 @@
+services:
+  backend:
+    # Optional strict mode. Some hosts (including certain Proxmox setups) may reject
+    # backend startup with EPERM on python exec when this policy is enforced.
+    security_opt:
+      - no-new-privileges:true

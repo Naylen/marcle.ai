@@ -8,6 +8,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from app.env_utils import get_env
+from app.log_redact import httpx_event_hooks
 
 try:
     import discord
@@ -184,7 +185,7 @@ async def post_answer_to_discord(
         "Content-Type": "application/json",
     }
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, event_hooks=httpx_event_hooks()) as client:
             resp = await client.post(url, json=payload, headers=headers)
             if resp.status_code >= 400:
                 logger.warning("Discord answer post failed status=%d body=%s", resp.status_code, resp.text[:300])

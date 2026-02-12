@@ -28,6 +28,19 @@ bash scripts/safe_compose_config.sh
 - Store secret files under `./secrets/` when using Docker secrets overlays.
 - Rotate tokens immediately if raw resolved config is exposed.
 
+## Runtime Log Redaction
+
+Backend logging now redacts sensitive values before output.
+
+- Query parameters keep keys but replace sensitive values with `***`.
+- Bearer tokens in log lines are replaced with `Bearer ***`.
+- `httpx` / `httpcore` raw request logging is reduced to avoid unsafe URL output.
+
+Example (sanitized):
+
+- Before: `GET http://plex.local/identity?X-Plex-Token=abc123&apikey=xyz789`
+- After: `GET http://plex.local/identity?X-Plex-Token=***&apikey=***`
+
 ## Optional Docker Secrets Overlay
 
 Default workflow remains unchanged (`.env` works as-is).
@@ -40,3 +53,17 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 
 Create secret files first (for example `secrets/ADMIN_TOKEN`,
 `secrets/SESSION_SECRET`, etc.).
+
+## Optional Strict Backend Hardening
+
+Default backend security is host-compatible and keeps non-root execution, `cap_drop: [ALL]`,
+`read_only: true`, and `tmpfs` for `/tmp`.
+
+To opt into stricter backend policy (`no-new-privileges:true`), use:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
+```
+
+Some host policies can block backend startup in this strict mode with `operation not permitted`
+on Python exec. Keep strict mode opt-in unless your host confirms compatibility.

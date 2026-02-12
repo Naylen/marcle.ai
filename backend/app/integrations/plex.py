@@ -14,6 +14,7 @@ import httpx
 
 from app import config
 from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_params
+from app.log_redact import httpx_event_hooks
 from app.models import AuthRef, ServiceConfig, ServiceStatus, Status
 
 logger = logging.getLogger("marcle.integrations.plex")
@@ -157,7 +158,11 @@ async def _probe_plex(service: ServiceConfig, auth_params: dict[str, str]) -> Pl
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(verify=service.verify_ssl, timeout=timeout) as client:
+        async with httpx.AsyncClient(
+            verify=service.verify_ssl,
+            timeout=timeout,
+            event_hooks=httpx_event_hooks(),
+        ) as client:
             identity_response = await _get_plex_endpoint(client, service.url, "/identity", auth_params)
             identity_ok = 200 <= identity_response.status_code < 300
             if identity_response.status_code in {401, 403}:

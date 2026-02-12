@@ -49,6 +49,7 @@ Reason for two hostnames: UI should require OTP/SSO for humans, while webhook en
 │   ├── services.json        Runtime service definitions (safe to commit)
 │   └── notifications.json   Runtime notification endpoint config (safe to commit)
 ├── docker-compose.yml
+├── docker-compose.hardened.yml
 ├── .env.example
 └── scripts/audit_services.py
 ```
@@ -69,6 +70,9 @@ Use redacted output instead:
 ```bash
 bash scripts/safe_compose_config.sh
 ```
+
+Backend defaults are host-compatible and keep non-root execution, `cap_drop: [ALL]`,
+`read_only: true`, and `/tmp` tmpfs. Strict `no-new-privileges:true` for backend is opt-in.
 
 Default URLs:
 
@@ -288,6 +292,24 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 
 Place secret files under `./secrets/` (for example `secrets/ADMIN_TOKEN`, `secrets/SESSION_SECRET`).
 
+### Optional Strict Backend Hardening
+
+Enable strict backend hardening without editing base compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
+```
+
+On some hosts (including certain Proxmox setups), strict mode may block backend startup with
+`exec /usr/local/bin/python: operation not permitted`. Keep strict mode opt-in unless verified.
+
+### Log Secret Redaction
+
+Backend logs redact sensitive query values and bearer tokens while preserving operational context.
+
+- Before: `HTTP Request: GET http://tautulli.local/api/v2?apikey=abc123`
+- After: `HTTP response method=GET url=http://tautulli.local/api/v2?apikey=*** status=200`
+
 ## Local Development (without Docker)
 
 ```bash
@@ -328,7 +350,8 @@ Note: script default base URL is `http://localhost:9181`; set `MARCLE_BASE_URL` 
 Additional security utilities:
 
 - `bash scripts/safe_compose_config.sh` — redacted compose config output
-- `bash scripts/audit_arch.sh` — hardened architecture verification run
+- `bash scripts/audit_arch.sh` — default host-compatible hardening + leak checks
+- `STRICT_HARDENING=1 bash scripts/audit_arch.sh` — strict backend hardening validation (host dependent)
 
 ## Deployment Notes
 

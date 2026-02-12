@@ -19,6 +19,7 @@ from app.auth import InvalidCredentialFormatError, MissingCredentialError, build
 from app.audit_log import audit_log_store
 from app.config_store import config_store
 from app.integrations.plex import check_plex_service
+from app.log_redact import httpx_event_hooks, install_log_redaction
 from app.models import (
     AdminAuditEntry,
     AdminBulkServicesRequest,
@@ -45,14 +46,15 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s %(message)s",
     datefmt="%Y-%m-%dT%H:%M:%S",
 )
+install_log_redaction()
 logger = logging.getLogger("marcle.api")
 
 
 def _log_startup_env_warnings() -> None:
     if not config.ADMIN_TOKEN:
-        logger.warning("ADMIN_TOKEN is not set; admin endpoints are disabled.")
+        logger.warning("Admin API token is not set; admin endpoints are disabled.")
     if not config.TAUTULLI_API_KEY:
-        logger.warning("TAUTULLI_API_KEY is not set; Tautulli checks may report unknown.")
+        logger.warning("Tautulli API credential is not set; Tautulli checks may report unknown.")
 
 
 CHECK_TYPE_PROFILES: dict[str, dict] = {
@@ -587,7 +589,7 @@ async def _dispatch_test_notifications(cfg: NotificationsConfig) -> int:
     timeout = httpx.Timeout(timeout=config.REQUEST_TIMEOUT_SECONDS)
     dispatched = 0
 
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, event_hooks=httpx_event_hooks()) as client:
         for endpoint in cfg.endpoints:
             headers = {"Content-Type": "application/json"}
             try:

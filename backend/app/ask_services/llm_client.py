@@ -7,6 +7,8 @@ from urllib.parse import urlparse, urlunparse
 
 import httpx
 
+from app.log_redact import httpx_event_hooks
+
 logger = logging.getLogger("marcle.ask.llm.client")
 
 
@@ -146,7 +148,7 @@ async def call_openai_compatible(
 
     timeout = httpx.Timeout(max(float(timeout_seconds), 1.0))
     last_error: Exception | None = None
-    async with httpx.AsyncClient(timeout=timeout) as client:
+    async with httpx.AsyncClient(timeout=timeout, event_hooks=httpx_event_hooks()) as client:
         for index, url in enumerate(urls):
             try:
                 response = await client.post(url, json=payload, headers=headers)

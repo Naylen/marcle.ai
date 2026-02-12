@@ -9,6 +9,7 @@ import httpx
 
 from app import config
 from app.auth import InvalidCredentialFormatError, MissingCredentialError, build_auth_headers, build_auth_params
+from app.log_redact import httpx_event_hooks
 from app.models import AuthRef, ServiceStatus, Status, ServiceGroup
 
 logger = logging.getLogger("marcle.services")
@@ -76,7 +77,11 @@ async def http_check(
 
     start = time.monotonic()
     try:
-        async with httpx.AsyncClient(verify=verify_ssl, timeout=TIMEOUT) as client:
+        async with httpx.AsyncClient(
+            verify=verify_ssl,
+            timeout=TIMEOUT,
+            event_hooks=httpx_event_hooks(),
+        ) as client:
             resp = await client.get(full_url, headers=request_headers, params=request_params)
         latency = int((time.monotonic() - start) * 1000)
 

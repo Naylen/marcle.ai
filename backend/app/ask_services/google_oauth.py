@@ -6,6 +6,7 @@ import urllib.parse
 import httpx
 
 from app.env_utils import get_env
+from app.log_redact import httpx_event_hooks
 
 GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
 GOOGLE_CLIENT_SECRET: str = get_env("GOOGLE_CLIENT_SECRET", "")
@@ -34,7 +35,7 @@ def get_login_url(state: str, redirect_uri: str) -> str:
 
 async def exchange_code(code: str, redirect_uri: str) -> dict:
     """Exchange authorization code for tokens."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, event_hooks=httpx_event_hooks()) as client:
         resp = await client.post(
             GOOGLE_TOKEN_URL,
             data={
@@ -51,7 +52,7 @@ async def exchange_code(code: str, redirect_uri: str) -> dict:
 
 async def get_user_info(access_token: str) -> dict:
     """Fetch user profile from Google."""
-    async with httpx.AsyncClient(timeout=10.0) as client:
+    async with httpx.AsyncClient(timeout=10.0, event_hooks=httpx_event_hooks()) as client:
         resp = await client.get(
             GOOGLE_USERINFO_URL,
             headers={"Authorization": f"Bearer {access_token}"},

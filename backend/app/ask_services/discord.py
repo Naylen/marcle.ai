@@ -10,6 +10,7 @@ import urllib.parse
 import httpx
 
 from app.env_utils import get_env
+from app.log_redact import httpx_event_hooks
 
 logger = logging.getLogger("marcle.ask.discord")
 
@@ -222,7 +223,7 @@ async def post_question_to_discord(
     question_text: str,
 ) -> DiscordQuestionPostResult:
     """Post a new Ask question and create a per-question thread when possible."""
-    async with httpx.AsyncClient(timeout=15.0) as client:
+    async with httpx.AsyncClient(timeout=15.0, event_hooks=httpx_event_hooks()) as client:
         if DISCORD_BOT_TOKEN and DISCORD_ASK_CHANNEL_ID:
             try:
                 result = await _post_question_via_bot(
