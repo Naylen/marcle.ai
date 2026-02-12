@@ -148,7 +148,7 @@ Flow:
 Session/auth model for Ask user routes:
 
 - In-memory session dict keyed by `ask_session` cookie token
-- Session payload fields: `user_id`, `google_id`, `email`, `name`, `picture_url`, `created_at`
+- Session payload fields: `user_id`, `google_id`, `email`, `name`, `picture_url`, `csrf_token`, `created_at`
 - `ask_session` cookie: HttpOnly, SameSite=Lax, Path=/, 24h max-age (Secure when `BASE_PUBLIC_URL` is https)
 - `ask_csrf` cookie: non-HttpOnly double-submit token; required for mutable Ask user POSTs
 - No JWT and no `request.state.user` principal model
@@ -160,8 +160,10 @@ Features implemented:
 - Per-user in-memory rate limit (5 questions / 60s)
 - Points system (feature-flag controlled via ASK_POINTS_ENABLED; currently disabled by default)
 - SSE stream endpoint for per-question updates
-- CSRF protection (`X-CSRF-Token` must match `ask_csrf` cookie for `POST /api/ask/questions` and `POST /api/ask/auth/logout`)
+- CSRF protection (`X-CSRF-Token` must match both `ask_csrf` cookie and server-side session `csrf_token` for `POST /api/ask/questions` and `POST /api/ask/auth/logout`)
 - SSE ownership enforcement (only question owner can subscribe)
+- SSE abuse protections (per-session/per-IP concurrent caps and per-session connect-rate limit, returning `429 {"error":"too_many_streams"}`)
+- SSE payload minimization (`status`, `answer`, `snapshot` with truncated `answer_text`)
 - Discord role-gated human answer ingestion (thread messages + in-channel replies to the bot question)
 - Discord idempotency guard (already-answered questions are not overwritten unless admin override token is explicitly provided)
 - Two-stage fallback worker (local LLM first, OpenAI second)
@@ -201,6 +203,9 @@ Features implemented:
 - `POST /api/ask/questions` (requires `X-CSRF-Token` matching `ask_csrf` cookie)
 - `GET /api/ask/questions?limit=20`
 - `GET /api/ask/questions/{question_id}/events` (SSE)
+  - Unauthorized/invalid session: `401 {"error":"unauthorized"}`
+  - Non-owner or unknown question: `404` (anti-enumeration behavior)
+  - Rate-limited streams: `429 {"error":"too_many_streams"}`
 
 ### Ask Answer Webhook
 
@@ -241,6 +246,7 @@ Use `.env.example` as source of truth. Important groups:
 - Ask Discord + fallback worker: `DISCORD_BOT_TOKEN`, `DISCORD_ASK_CHANNEL_ID`, `DISCORD_GUILD_ID`, `DISCORD_SUPPORT_ROLE_ID`, `ASK_HUMAN_WAIT_SECONDS`, `ASK_OPENAI_WAIT_SECONDS`
 - Ask n8n integration: `N8N_TOKEN`
 - Ask webhook size guard: `ASK_WEBHOOK_MAX_BYTES`
+- Ask SSE controls: `ASK_SSE_MAX_CONN_PER_SESSION`, `ASK_SSE_MAX_CONN_PER_IP`, `ASK_SSE_CONN_RATE_PER_MIN`
 - Ask LLM fallback: local (`LOCAL_LLM_BASE_URL`, `LOCAL_LLM_API_KEY`, `LOCAL_LLM_MODEL`, `LOCAL_LLM_TIMEOUT_SECONDS`) and OpenAI (`LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, `OPENAI_TIMEOUT_SECONDS`)
   - Docker Model Runner base URL should use OpenAI-compatible path style, for example `http://172.16.2.220:12434/engines/v1`
 
@@ -251,7 +257,7 @@ Notes:
 - OpenAPI/docs are disabled in FastAPI (`docs_url`, `redoc_url`, `openapi_url` are `None`).
 - For Ask OAuth in production, set `BASE_PUBLIC_URL` to your public domain (for example `https://marcle.ai`).
 - `GOOGLE_REDIRECT_URL` is optional; if unset it is derived as `<BASE_PUBLIC_URL>/api/ask/auth/callback`.
-- SSE is proxied through nginx with buffering disabled and long-lived connection timeouts on `/api/ask/questions/*/events`.
+- SSE is proxied through nginx with buffering disabled, gzip disabled, and long-lived connection timeouts on `/api/ask/questions/*/events`.
 - `/ask` and `/admin` are served with strict security headers in nginx: CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and restrictive `Permissions-Policy`.
 - `Cache-Control: no-store` is set for Ask/Admin pages and Ask SSE responses.
 - SMTP auth uses `SMTP_USER`/`SMTP_PASS`, while message sender uses `SMTP_FROM`.

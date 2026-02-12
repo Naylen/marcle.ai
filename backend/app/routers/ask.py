@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import secrets
+import threading
 import time
 import urllib.parse
 from collections import defaultdict
@@ -44,6 +45,9 @@ ASK_POINTS_ENABLED: bool = app_config.ASK_POINTS_ENABLED
 ASK_SESSION_MAX_AGE_SECONDS: int = 86400
 ASK_CSRF_COOKIE_NAME: str = "ask_csrf"
 ASK_WEBHOOK_MAX_BYTES: int = int(os.getenv("ASK_WEBHOOK_MAX_BYTES", str(64 * 1024)))
+ASK_SSE_MAX_CONN_PER_SESSION: int = max(int(os.getenv("ASK_SSE_MAX_CONN_PER_SESSION", "2")), 1)
+ASK_SSE_MAX_CONN_PER_IP: int = max(int(os.getenv("ASK_SSE_MAX_CONN_PER_IP", "10")), 1)
+ASK_SSE_CONN_RATE_PER_MIN: int = max(int(os.getenv("ASK_SSE_CONN_RATE_PER_MIN", "10")), 1)
 
 # Rate limiting: per-user, in-memory
 _rate_limit_window: int = 60  # seconds
@@ -60,6 +64,10 @@ _oauth_states: dict[str, dict[str, str | float]] = {}
 # SSE subscribers by question_id
 _sse_subscribers: dict[int, set[asyncio.Queue[dict[str, Any]]]] = defaultdict(set)
 _sse_lock = asyncio.Lock()
+_sse_conn_guard = threading.Lock()
+_sse_active_conn_by_session: dict[str, int] = defaultdict(int)
+_sse_active_conn_by_ip: dict[str, int] = defaultdict(int)
+_sse_conn_starts_by_session: dict[str, list[float]] = defaultdict(list)
 
 # Ask background loop task
 _ask_fallback_task: asyncio.Task | None = None
@@ -264,23 +272,47 @@ def _validate_csrf(
     return True
 
 
+_SSE_PUBLIC_STATUS_VALUES: set[str] = {
+    "pending",
+    "answered",
+    "posted_to_discord",
+    "local_llm_failed",
+    "openai_failed",
+}
+_SSE_MAX_ANSWER_TEXT_LEN: int = 20_000
+_SSE_CONN_RATE_WINDOW_SECONDS: int = 60
+
+
+def _sanitize_public_status(status_value: str, fallback: str = "pending") -> str:
+    candidate = str(status_value or "").strip().lower()
+    if candidate in _SSE_PUBLIC_STATUS_VALUES:
+        return candidate
+    return fallback
+
+
+def _truncate_answer_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = str(value)
+    if len(trimmed) <= _SSE_MAX_ANSWER_TEXT_LEN:
+        return trimmed
+    return trimmed[:_SSE_MAX_ANSWER_TEXT_LEN]
+
+
 def _public_question_status(question_row: dict[str, Any]) -> str:
     """Map internal question row to stable public status."""
-    return "answered" if question_row.get("answer_text") else "pending"
+    return _sanitize_public_status("answered" if question_row.get("answer_text") else "pending")
 
 
 def _serialize_question_snapshot(question_row: dict[str, Any]) -> dict[str, Any]:
     """Return a normalized snapshot payload for SSE."""
-    has_answer = bool(question_row.get("answer_text"))
     return {
         "id": question_row["id"],
         "status": _public_question_status(question_row),
         "question_text": question_row.get("question_text"),
-        "answer_text": question_row.get("answer_text"),
+        "answer_text": _truncate_answer_text(question_row.get("answer_text")),
         "created_at": question_row.get("created_at"),
         "answered_at": question_row.get("answered_at"),
-        "deadline_at": question_row.get("deadline_at"),
-        "answered_by": question_row.get("answered_by") if has_answer else None,
     }
 
 
@@ -315,6 +347,65 @@ async def _publish_question_event(question_id: int, event_name: str, payload: di
         queue.put_nowait(message)
 
 
+def _extract_client_ip(request: Request) -> str:
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
+    if request.client and request.client.host:
+        return request.client.host
+    return "unknown"
+
+
+def _cleanup_sse_tracking_locked(now: float) -> None:
+    cutoff = now - _SSE_CONN_RATE_WINDOW_SECONDS
+    stale_sessions: list[str] = []
+    for session_token, timestamps in _sse_conn_starts_by_session.items():
+        pruned = [ts for ts in timestamps if ts >= cutoff]
+        if pruned:
+            _sse_conn_starts_by_session[session_token] = pruned
+            continue
+        if _sse_active_conn_by_session.get(session_token, 0) <= 0:
+            stale_sessions.append(session_token)
+        else:
+            _sse_conn_starts_by_session[session_token] = []
+    for session_token in stale_sessions:
+        _sse_conn_starts_by_session.pop(session_token, None)
+
+    for session_token, active_count in list(_sse_active_conn_by_session.items()):
+        if active_count <= 0:
+            _sse_active_conn_by_session.pop(session_token, None)
+    for ip_addr, active_count in list(_sse_active_conn_by_ip.items()):
+        if active_count <= 0:
+            _sse_active_conn_by_ip.pop(ip_addr, None)
+
+
+def _allow_sse_stream(session_token: str, client_ip: str) -> bool:
+    now = time.time()
+    with _sse_conn_guard:
+        _cleanup_sse_tracking_locked(now)
+        timestamps = _sse_conn_starts_by_session.get(session_token, [])
+        if len(timestamps) >= ASK_SSE_CONN_RATE_PER_MIN:
+            return False
+        if _sse_active_conn_by_session.get(session_token, 0) >= ASK_SSE_MAX_CONN_PER_SESSION:
+            return False
+        if _sse_active_conn_by_ip.get(client_ip, 0) >= ASK_SSE_MAX_CONN_PER_IP:
+            return False
+        timestamps.append(now)
+        _sse_conn_starts_by_session[session_token] = timestamps
+        _sse_active_conn_by_session[session_token] += 1
+        _sse_active_conn_by_ip[client_ip] += 1
+        return True
+
+
+def _release_sse_stream(session_token: str, client_ip: str) -> None:
+    with _sse_conn_guard:
+        if session_token in _sse_active_conn_by_session:
+            _sse_active_conn_by_session[session_token] -= 1
+        if client_ip in _sse_active_conn_by_ip:
+            _sse_active_conn_by_ip[client_ip] -= 1
+        _cleanup_sse_tracking_locked(time.time())
+
+
 def _fetch_question_for_user_sync(question_id: int, user_id: int) -> dict[str, Any] | None:
     with get_db() as conn:
         row = conn.execute(
@@ -346,7 +437,6 @@ async def _publish_status(question_id: int) -> None:
         "status",
         {
             "status": _public_question_status(row),
-            "deadline_at": row.get("deadline_at"),
         },
     )
 
@@ -359,10 +449,7 @@ async def _publish_answer(question_id: int) -> None:
         question_id,
         "answer",
         {
-            "answer_text": row.get("answer_text"),
-            "answered_at": row.get("answered_at"),
-            "answered_by": row.get("answered_by"),
-            "status": "answered",
+            "answer_text": _truncate_answer_text(row.get("answer_text")),
         },
     )
 
@@ -545,14 +632,9 @@ async def _publish_status_value(
     detail: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
-    row = await asyncio.to_thread(_fetch_question_by_id_sync, question_id)
-    payload: dict[str, Any] = {"status": status_value}
-    if row is not None:
-        payload["deadline_at"] = row.get("deadline_at")
-    if detail:
-        payload["detail"] = detail[:300]
-    if extra:
-        payload.update(extra)
+    _ = detail
+    _ = extra
+    payload: dict[str, Any] = {"status": _sanitize_public_status(status_value)}
     await _publish_question_event(question_id, "status", payload)
 
 
@@ -1240,9 +1322,17 @@ async def list_questions(
 
 
 @router.get("/questions/{question_id}/events")
-async def question_events_stream(question_id: int, request: Request):
+async def question_events_stream(
+    question_id: int,
+    request: Request,
+    ask_session: str | None = Cookie(default=None),
+):
     """Stream live Ask updates for one question via SSE."""
-    session = _get_session_or_none(request=request)
+    session_token = (ask_session or request.cookies.get("ask_session") or "").strip()
+    if not session_token:
+        return _unauthorized_response()
+
+    session = _get_session_or_none(ask_session=session_token)
     if session is None:
         return _unauthorized_response()
     user_id = int(session["user_id"])
@@ -1251,9 +1341,14 @@ async def question_events_stream(question_id: int, request: Request):
     if question is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Question not found")
 
+    client_ip = _extract_client_ip(request)
+    if not _allow_sse_stream(session_token, client_ip):
+        return JSONResponse(status_code=status.HTTP_429_TOO_MANY_REQUESTS, content={"error": "too_many_streams"})
+
     async def _event_stream() -> AsyncIterator[str]:
-        queue = await _subscribe_question(question_id)
+        queue: asyncio.Queue[dict[str, Any]] | None = None
         try:
+            queue = await _subscribe_question(question_id)
             current = await asyncio.to_thread(_fetch_question_for_user_sync, question_id, user_id)
             if current is not None:
                 yield _sse_event("snapshot", _serialize_question_snapshot(current))
@@ -1261,12 +1356,15 @@ async def question_events_stream(question_id: int, request: Request):
                 if await request.is_disconnected():
                     break
                 try:
+                    assert queue is not None
                     event = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield _sse_event(event["event"], event["payload"])
                 except asyncio.TimeoutError:
                     yield ": keepalive\n\n"
         finally:
-            await _unsubscribe_question(question_id, queue)
+            if queue is not None:
+                await _unsubscribe_question(question_id, queue)
+            _release_sse_stream(session_token, client_ip)
 
     return StreamingResponse(
         _event_stream(),

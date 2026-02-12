@@ -12,6 +12,13 @@ import app.routers.ask as ask_module
 from app.main import app
 
 
+def _reset_sse_tracking() -> None:
+    with ask_module._sse_conn_guard:
+        ask_module._sse_active_conn_by_session.clear()
+        ask_module._sse_active_conn_by_ip.clear()
+        ask_module._sse_conn_starts_by_session.clear()
+
+
 def _reset_ask_db(tmp_path) -> None:
     existing = getattr(ask_db._local, "conn", None)
     if existing is not None:
@@ -20,6 +27,7 @@ def _reset_ask_db(tmp_path) -> None:
     ask_db.ASK_DB_PATH = str(tmp_path / "ask-security.db")
     ask_db.init_db()
     ask_module._sessions.clear()
+    _reset_sse_tracking()
 
 
 def _insert_user(email: str, name: str = "User") -> int:
@@ -266,6 +274,93 @@ def test_sse_enforces_question_ownership(tmp_path):
     response = client.get(f"/api/ask/questions/{foreign_question_id}/events", cookies={"ask_session": session_token})
 
     assert response.status_code == 404
+
+
+def test_sse_connection_limit_and_release(tmp_path, monkeypatch):
+    _reset_ask_db(tmp_path)
+    user_id = _insert_user("owner@example.com")
+    question_id = _insert_question(user_id=user_id, text="Question from owner")
+    session_token = _create_session(user_id, "owner@example.com")
+    client_ip = "127.0.0.1"
+
+    monkeypatch.setattr(ask_module, "ASK_SSE_MAX_CONN_PER_SESSION", 1)
+    monkeypatch.setattr(ask_module, "ASK_SSE_MAX_CONN_PER_IP", 10)
+    monkeypatch.setattr(ask_module, "ASK_SSE_CONN_RATE_PER_MIN", 10)
+
+    assert ask_module._allow_sse_stream(session_token, client_ip) is True
+    client = TestClient(app)
+    blocked = client.get(
+        f"/api/ask/questions/{question_id}/events",
+        cookies={"ask_session": session_token},
+    )
+    assert blocked.status_code == 429
+    assert blocked.json() == {"error": "too_many_streams"}
+
+    with ask_module._sse_conn_guard:
+        assert ask_module._sse_active_conn_by_session.get(session_token, 0) == 1
+        assert ask_module._sse_active_conn_by_ip.get(client_ip, 0) == 1
+
+    # Simulate stream disconnect/finally cleanup.
+    ask_module._release_sse_stream(session_token, client_ip)
+    with ask_module._sse_conn_guard:
+        assert ask_module._sse_active_conn_by_session.get(session_token, 0) == 0
+        assert ask_module._sse_active_conn_by_ip.get(client_ip, 0) == 0
+
+    assert ask_module._allow_sse_stream(session_token, client_ip) is True
+    ask_module._release_sse_stream(session_token, client_ip)
+
+
+def test_sse_connection_rate_limited_per_minute(tmp_path, monkeypatch):
+    _reset_ask_db(tmp_path)
+    user_id = _insert_user("owner@example.com")
+    question_id = _insert_question(user_id=user_id, text="Question from owner")
+    session_token = _create_session(user_id, "owner@example.com")
+    client_ip = "127.0.0.1"
+
+    monkeypatch.setattr(ask_module, "ASK_SSE_MAX_CONN_PER_SESSION", 2)
+    monkeypatch.setattr(ask_module, "ASK_SSE_MAX_CONN_PER_IP", 10)
+    monkeypatch.setattr(ask_module, "ASK_SSE_CONN_RATE_PER_MIN", 1)
+
+    assert ask_module._allow_sse_stream(session_token, client_ip) is True
+    ask_module._release_sse_stream(session_token, client_ip)
+
+    client = TestClient(app)
+    blocked = client.get(
+        f"/api/ask/questions/{question_id}/events",
+        cookies={"ask_session": session_token},
+    )
+    assert blocked.status_code == 429
+    assert blocked.json() == {"error": "too_many_streams"}
+
+
+def test_question_list_omits_discord_internal_fields(tmp_path):
+    _reset_ask_db(tmp_path)
+    user_id = _insert_user("owner@example.com")
+    question_id = _insert_question(
+        user_id=user_id,
+        text="Question from owner",
+        discord_message_id="discord-message-1",
+        discord_thread_id="discord-thread-1",
+    )
+    with ask_db.get_db() as conn:
+        conn.execute(
+            "UPDATE questions SET discord_channel_id = ?, discord_guild_id = ? WHERE id = ?",
+            ("discord-channel-1", "discord-guild-1", question_id),
+        )
+        conn.commit()
+
+    session_token = _create_session(user_id, "owner@example.com")
+    client = TestClient(app)
+    response = client.get("/api/ask/questions", cookies={"ask_session": session_token})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert isinstance(payload, list) and payload
+    first = payload[0]
+    assert "discord_message_id" not in first
+    assert "discord_thread_id" not in first
+    assert "discord_channel_id" not in first
+    assert "discord_guild_id" not in first
 
 
 def test_answer_webhook_uses_constant_time_compare(monkeypatch):
