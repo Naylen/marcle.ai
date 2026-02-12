@@ -355,6 +355,7 @@ Additional security utilities:
 - `bash scripts/safe_compose_config.sh` — redacted compose config output
 - `bash scripts/audit_arch.sh` — default host-compatible hardening + leak checks
 - `STRICT_HARDENING=1 bash scripts/audit_arch.sh` — strict runtime hardening validation (host dependent)
+- `bash scripts/verify_admin.sh` — rebuild/start frontend+backend and verify `/`, `/admin`, `/api/status`, and authenticated `/api/admin/services` (when `ADMIN_TOKEN` is set). Prints frontend logs on failure.
 
 ## Deployment Notes
 
