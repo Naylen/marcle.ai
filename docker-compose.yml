@@ -10,8 +10,6 @@ services:
       - /var/log/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101
     cap_drop:
       - ALL
-    security_opt:
-      - no-new-privileges:true
     pids_limit: 128
     mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
     ports:

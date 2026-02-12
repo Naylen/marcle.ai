@@ -71,8 +71,9 @@ Use redacted output instead:
 bash scripts/safe_compose_config.sh
 ```
 
-Backend defaults are host-compatible and keep non-root execution, `cap_drop: [ALL]`,
-`read_only: true`, and `/tmp` tmpfs. Strict `no-new-privileges:true` for backend is opt-in.
+Default compose is host-compatible and keeps hardening like non-root execution (backend),
+`cap_drop: [ALL]`, `read_only: true`, and tmpfs mounts. Strict
+`no-new-privileges:true` is opt-in via overlay.
 
 Default URLs:
 
@@ -292,16 +293,18 @@ docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
 
 Place secret files under `./secrets/` (for example `secrets/ADMIN_TOKEN`, `secrets/SESSION_SECRET`).
 
-### Optional Strict Backend Hardening
+### Optional Strict Runtime Hardening
 
-Enable strict backend hardening without editing base compose files:
+Enable strict hardening (frontend + backend `no-new-privileges:true`) without editing base
+compose files:
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d --build
 ```
 
-On some hosts (including certain Proxmox setups), strict mode may block backend startup with
-`exec /usr/local/bin/python: operation not permitted`. Keep strict mode opt-in unless verified.
+On some hosts (including certain Proxmox setups), strict mode may block startup with
+`operation not permitted` at exec time (examples: `exec /usr/local/bin/python: operation not permitted`
+or `exec /docker-entrypoint.sh: operation not permitted`). Keep strict mode opt-in unless verified.
 
 ### Log Secret Redaction
 
@@ -351,7 +354,7 @@ Additional security utilities:
 
 - `bash scripts/safe_compose_config.sh` — redacted compose config output
 - `bash scripts/audit_arch.sh` — default host-compatible hardening + leak checks
-- `STRICT_HARDENING=1 bash scripts/audit_arch.sh` — strict backend hardening validation (host dependent)
+- `STRICT_HARDENING=1 bash scripts/audit_arch.sh` — strict runtime hardening validation (host dependent)
 
 ## Deployment Notes
 
