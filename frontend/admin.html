@@ -19,7 +19,16 @@
     </div>
   </header>
 
-  <main class="admin-wrap admin-control-plane">
+  <noscript>
+    <div class="admin-wrap">
+      <div class="admin-alert admin-alert-error admin-noscript-warning" role="alert">
+        Admin controls require JavaScript. Enable JavaScript and reload this page.
+      </div>
+    </div>
+  </noscript>
+
+  <main id="admin-root" class="admin-wrap admin-control-plane">
+    <div id="admin-init-error" class="admin-alert admin-alert-error is-hidden" role="alert" aria-live="assertive"></div>
     <header class="admin-topbar" aria-label="Control plane summary">
       <div class="admin-topbar-health">
         <div class="admin-topbar-overall">
@@ -463,6 +472,6 @@
     </div>
   </div>
 
-  <script src="admin.js"></script>
+  <script src="admin.js" defer></script>
 </body>
 </html>

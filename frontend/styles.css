@@ -1093,6 +1093,14 @@ body.admin-page {
   display: none !important;
 }
 
+#admin-init-error {
+  margin-bottom: 0.2rem;
+}
+
+.admin-noscript-warning {
+  margin-bottom: 0.2rem;
+}
+
 .admin-page-header {
   display: grid;
   gap: 0.28rem;

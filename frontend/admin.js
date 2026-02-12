@@ -144,19 +144,80 @@
     auth_header_name: document.getElementById("notification-auth-header")
   };
 
-  var requiredElements = [
-    dom.tokenInput,
-    dom.connectBtn,
-    dom.authStatusIndicator,
-    dom.serviceListBody,
-    dom.serviceForm,
-    dom.notificationsListBody,
-    dom.auditTableBody,
-    dom.modalBackdrop,
-    dom.modalConfirmBtn,
-    dom.modalRequireInput
-  ];
-  if (requiredElements.some(function (node) { return !node; })) {
+  function showInitError(summary, rawError) {
+    var root = document.getElementById("admin-root") || document.body;
+    var banner = document.getElementById("admin-init-error");
+
+    if (!banner) {
+      banner = document.createElement("div");
+      banner.id = "admin-init-error";
+      banner.setAttribute("role", "alert");
+      banner.setAttribute("aria-live", "assertive");
+      if (root && root.firstChild) {
+        root.insertBefore(banner, root.firstChild);
+      } else if (root) {
+        root.appendChild(banner);
+      } else if (document.body) {
+        document.body.appendChild(banner);
+      }
+    }
+
+    var details = rawError ? " Error: " + rawError : "";
+    banner.textContent = summary + " Open DevTools Console for details." + details;
+    banner.className = "admin-alert admin-alert-error";
+    banner.hidden = false;
+  }
+
+  function listMissingRequiredElements() {
+    var missing = [];
+
+    Object.keys(dom).forEach(function (key) {
+      if (key === "tabs") {
+        if (!Array.isArray(dom.tabs) || dom.tabs.length === 0) {
+          missing.push("tab buttons ([data-admin-tab])");
+        }
+        return;
+      }
+      if (key === "tabPanels") {
+        Object.keys(dom.tabPanels).forEach(function (tabName) {
+          if (!dom.tabPanels[tabName]) {
+            missing.push("tab panel for '" + tabName + "'");
+          }
+        });
+        return;
+      }
+      if (!dom[key]) {
+        missing.push("dom." + key);
+      }
+    });
+
+    Object.keys(serviceFields).forEach(function (key) {
+      if (!serviceFields[key]) {
+        missing.push("serviceFields." + key);
+      }
+    });
+
+    Object.keys(serviceFieldErrors).forEach(function (key) {
+      if (!serviceFieldErrors[key]) {
+        missing.push("serviceFieldErrors." + key);
+      }
+    });
+
+    Object.keys(notificationFields).forEach(function (key) {
+      if (!notificationFields[key]) {
+        missing.push("notificationFields." + key);
+      }
+    });
+
+    return missing;
+  }
+
+  var missingRequiredElements = listMissingRequiredElements();
+  if (missingRequiredElements.length) {
+    showInitError(
+      "Admin panel shell is incomplete and could not initialize.",
+      missingRequiredElements.join(", ")
+    );
     return;
   }
 
@@ -2250,22 +2311,23 @@
   }
 
   // --- event wiring ---------------------------------------------------------
-  dom.tokenInput.addEventListener("input", onTokenInputChanged);
-  dom.connectBtn.addEventListener("click", onConnectClicked);
+  try {
+    dom.tokenInput.addEventListener("input", onTokenInputChanged);
+    dom.connectBtn.addEventListener("click", onConnectClicked);
 
-  dom.searchInput.addEventListener("input", onSearchInputChanged);
-  dom.groupFilter.addEventListener("change", onGroupFilterChanged);
-  dom.unhealthyOnlyToggle.addEventListener("change", onUnhealthyToggleChanged);
-  dom.sortSelect.addEventListener("change", onSortChanged);
-  dom.clearFiltersBtn.addEventListener("click", onClearFiltersClicked);
-  dom.secretsHealthFilterBtn.addEventListener("click", onSecretsFilterClicked);
-  dom.newServiceBtn.addEventListener("click", onNewServiceClicked);
+    dom.searchInput.addEventListener("input", onSearchInputChanged);
+    dom.groupFilter.addEventListener("change", onGroupFilterChanged);
+    dom.unhealthyOnlyToggle.addEventListener("change", onUnhealthyToggleChanged);
+    dom.sortSelect.addEventListener("change", onSortChanged);
+    dom.clearFiltersBtn.addEventListener("click", onClearFiltersClicked);
+    dom.secretsHealthFilterBtn.addEventListener("click", onSecretsFilterClicked);
+    dom.newServiceBtn.addEventListener("click", onNewServiceClicked);
 
-  dom.bulkSelectAllBtn.addEventListener("click", onBulkSelectAllClicked);
-  dom.bulkEnableBtn.addEventListener("click", onBulkEnableClicked);
-  dom.bulkDisableBtn.addEventListener("click", onBulkDisableClicked);
+    dom.bulkSelectAllBtn.addEventListener("click", onBulkSelectAllClicked);
+    dom.bulkEnableBtn.addEventListener("click", onBulkEnableClicked);
+    dom.bulkDisableBtn.addEventListener("click", onBulkDisableClicked);
 
-  dom.serviceListBody.addEventListener("click", function (event) {
+    dom.serviceListBody.addEventListener("click", function (event) {
     var groupToggle = event.target.closest("button[data-group-toggle]");
     if (groupToggle) {
       onServiceGroupToggle(groupToggle.getAttribute("data-group-toggle"));
@@ -2294,38 +2356,38 @@
     if (!row) return;
     if (event.target.closest("input,button,a,select,textarea,label")) return;
     onServiceRowSelected(row.getAttribute("data-service-id"));
-  });
+    });
 
-  dom.serviceListBody.addEventListener("change", function (event) {
+    dom.serviceListBody.addEventListener("change", function (event) {
     var checkbox = event.target.closest("input[data-service-select]");
     if (!checkbox) return;
     var serviceId = checkbox.getAttribute("data-service-select");
     onServiceBulkSelectionChanged(serviceId, !!checkbox.checked);
-  });
+    });
 
-  dom.serviceForm.addEventListener("submit", onServiceFormSubmit);
-  dom.resetServiceFormBtn.addEventListener("click", onServiceFormReset);
-  dom.cancelEditBtn.addEventListener("click", onServiceCancelEdit);
-  dom.serviceDeleteBtn.addEventListener("click", onServiceDangerDeleteClicked);
-  dom.serviceRunCheckBtn.addEventListener("click", onRunCheckClicked);
+    dom.serviceForm.addEventListener("submit", onServiceFormSubmit);
+    dom.resetServiceFormBtn.addEventListener("click", onServiceFormReset);
+    dom.cancelEditBtn.addEventListener("click", onServiceCancelEdit);
+    dom.serviceDeleteBtn.addEventListener("click", onServiceDangerDeleteClicked);
+    dom.serviceRunCheckBtn.addEventListener("click", onRunCheckClicked);
 
-  serviceFields.auth_scheme.addEventListener("change", function () {
+    serviceFields.auth_scheme.addEventListener("change", function () {
     onServiceFieldTouched("auth_scheme");
     setServiceAuthVisibility(true);
     renderActionState();
-  });
+    });
 
-  serviceFields.check_type.addEventListener("change", function () {
+    serviceFields.check_type.addEventListener("change", function () {
     maybeDefaultAuthForCheckType(serviceFields.check_type.value);
     onServiceFieldTouched("check_type");
-  });
+    });
 
-  serviceFields.check_type.addEventListener("input", function () {
+    serviceFields.check_type.addEventListener("input", function () {
     maybeDefaultAuthForCheckType(serviceFields.check_type.value);
     onServiceFieldTouched("check_type");
-  });
+    });
 
-  Object.keys(serviceFields).forEach(function (fieldName) {
+    Object.keys(serviceFields).forEach(function (fieldName) {
     var field = serviceFields[fieldName];
     if (!field) return;
     field.addEventListener("input", function () {
@@ -2337,44 +2399,44 @@
     field.addEventListener("blur", function () {
       onServiceFieldTouched(fieldName);
     });
-  });
+    });
 
-  dom.tabs.forEach(function (tabButton) {
+    dom.tabs.forEach(function (tabButton) {
     tabButton.addEventListener("click", function () {
       onTabClicked(tabButton.getAttribute("data-admin-tab"));
     });
-  });
+    });
 
-  dom.notificationsLoadBtn.addEventListener("click", onNotificationsLoadClicked);
-  dom.notificationsSaveBtn.addEventListener("click", onNotificationsSaveClicked);
-  dom.notificationsTestBtn.addEventListener("click", onNotificationsTestClicked);
+    dom.notificationsLoadBtn.addEventListener("click", onNotificationsLoadClicked);
+    dom.notificationsSaveBtn.addEventListener("click", onNotificationsSaveClicked);
+    dom.notificationsTestBtn.addEventListener("click", onNotificationsTestClicked);
 
-  dom.notificationsEnabled.addEventListener("change", function () {
+    dom.notificationsEnabled.addEventListener("change", function () {
     state.data.notificationsConfig.enabled = !!dom.notificationsEnabled.checked;
     renderNotificationsMeta();
-  });
+    });
 
-  notificationFields.auth_scheme.addEventListener("change", function () {
+    notificationFields.auth_scheme.addEventListener("change", function () {
     renderNotificationAuthVisibility(true);
     renderActionState();
-  });
+    });
 
-  dom.notificationForm.addEventListener("submit", onNotificationFormSubmit);
-  dom.notificationResetBtn.addEventListener("click", function () {
+    dom.notificationForm.addEventListener("submit", onNotificationFormSubmit);
+    dom.notificationResetBtn.addEventListener("click", function () {
     hideNotificationsMessage();
     if (state.ui.notificationEditId) {
       applyNotificationEditMode(state.ui.notificationEditId);
       return;
     }
     applyNotificationAddMode();
-  });
+    });
 
-  dom.notificationCancelEditBtn.addEventListener("click", function () {
+    dom.notificationCancelEditBtn.addEventListener("click", function () {
     hideNotificationsMessage();
     applyNotificationAddMode();
-  });
+    });
 
-  dom.notificationsListBody.addEventListener("click", function (event) {
+    dom.notificationsListBody.addEventListener("click", function (event) {
     var button = event.target.closest("button[data-notification-action]");
     if (!button) return;
     if (!hasToken() || anyLoading()) return;
@@ -2392,13 +2454,13 @@
     if (action === "delete") {
       onNotificationDeleteClicked(endpointId);
     }
-  });
+    });
 
-  dom.auditRefreshBtn.addEventListener("click", onAuditRefreshClicked);
-  dom.auditActionFilter.addEventListener("change", renderAudit);
-  dom.auditSearchInput.addEventListener("input", renderAudit);
+    dom.auditRefreshBtn.addEventListener("click", onAuditRefreshClicked);
+    dom.auditActionFilter.addEventListener("change", renderAudit);
+    dom.auditSearchInput.addEventListener("input", renderAudit);
 
-  dom.auditTableBody.addEventListener("click", async function (event) {
+    dom.auditTableBody.addEventListener("click", async function (event) {
     var copyButton = event.target.closest("button[data-audit-copy='1']");
     if (!copyButton) return;
 
@@ -2415,25 +2477,25 @@
     } catch (_err) {
       dom.auditListMeta.textContent = "Unable to copy row JSON.";
     }
-  });
+    });
 
-  dom.modalCancelBtn.addEventListener("click", function () {
+    dom.modalCancelBtn.addEventListener("click", function () {
     if (state.ui.loading.modalAction) return;
     closeConfirmModal();
-  });
+    });
 
-  dom.modalBackdrop.addEventListener("click", function (event) {
+    dom.modalBackdrop.addEventListener("click", function (event) {
     if (event.target !== dom.modalBackdrop || state.ui.loading.modalAction) return;
     closeConfirmModal();
-  });
+    });
 
-  dom.modalRequireInput.addEventListener("input", updateModalConfirmState);
-  dom.modalConfirmBtn.addEventListener("click", onModalConfirmClicked);
+    dom.modalRequireInput.addEventListener("input", updateModalConfirmState);
+    dom.modalConfirmBtn.addEventListener("click", onModalConfirmClicked);
 
-  document.addEventListener("keydown", onDocumentKeyDown);
+    document.addEventListener("keydown", onDocumentKeyDown);
 
-  // --- initialization -------------------------------------------------------
-  function initializeUiState() {
+    // --- initialization -------------------------------------------------------
+    function initializeUiState() {
     state.auth.token = dom.tokenInput.value.trim();
 
     dom.searchInput.value = state.filters.search;
@@ -2451,23 +2513,30 @@
     renderServiceEditor();
     closeConfirmModal();
     renderActionState();
+    }
+
+    initializeUiState();
+
+    refreshPublicHealthPreview();
+
+    setInterval(function () {
+      refreshPublicHealthPreview().catch(function () {
+        dom.healthNote.textContent = "Public health preview unavailable.";
+        dom.healthNote.className = "admin-health-note is-warning";
+      });
+    }, HEALTH_POLL_INTERVAL);
+
+    setInterval(function () {
+      if (!state.auth.connected || !hasToken() || anyLoading()) return;
+      loadAudit().catch(function () {
+        dom.auditListMeta.textContent = "Failed to refresh audit entries.";
+      });
+    }, AUDIT_POLL_INTERVAL);
+  } catch (initError) {
+    var initMessage = initError && initError.message ? initError.message : String(initError);
+    showInitError("Admin panel failed to initialize.", initMessage);
+    if (window && window.console && typeof window.console.error === "function") {
+      window.console.error("admin.init_failed", initError);
+    }
   }
-
-  initializeUiState();
-
-  refreshPublicHealthPreview();
-
-  setInterval(function () {
-    refreshPublicHealthPreview().catch(function () {
-      dom.healthNote.textContent = "Public health preview unavailable.";
-      dom.healthNote.className = "admin-health-note is-warning";
-    });
-  }, HEALTH_POLL_INTERVAL);
-
-  setInterval(function () {
-    if (!state.auth.connected || !hasToken() || anyLoading()) return;
-    loadAudit().catch(function () {
-      dom.auditListMeta.textContent = "Failed to refresh audit entries.";
-    });
-  }, AUDIT_POLL_INTERVAL);
 })();
