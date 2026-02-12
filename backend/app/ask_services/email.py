@@ -6,12 +6,14 @@ import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 
+from app.env_utils import get_env
+
 logger = logging.getLogger("marcle.ask.email")
 
 SMTP_HOST: str = os.getenv("SMTP_HOST", "")
 SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
-SMTP_USER: str = os.getenv("SMTP_USER", "")
-SMTP_PASS: str = os.getenv("SMTP_PASS", "")
+SMTP_USER: str = get_env("SMTP_USER", "")
+SMTP_PASS: str = get_env("SMTP_PASS", "")
 SMTP_FROM: str = os.getenv("SMTP_FROM", "")
 SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes", "on"}
 

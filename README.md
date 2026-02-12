@@ -63,6 +63,13 @@ cp .env.example .env
 docker compose up --build
 ```
 
+Never share raw `docker compose config` output; it can include resolved secrets.
+Use redacted output instead:
+
+```bash
+bash scripts/safe_compose_config.sh
+```
+
 Default URLs:
 
 - Status dashboard: `http://localhost:9182`
@@ -239,6 +246,7 @@ These files are created/updated at runtime in `/data` (Docker bind-mounts `./dat
 Use `.env.example` as source of truth. Important groups:
 
 - Core status loop: `REFRESH_INTERVAL_SECONDS`, `REQUEST_TIMEOUT_SECONDS`, `MAX_CONCURRENCY`
+- Runtime hardening knobs: `FRONTEND_MEM_LIMIT`, `BACKEND_MEM_LIMIT`, `BACKEND_UID`, `BACKEND_GID`
 - Runtime paths: `SERVICES_CONFIG_PATH`, `NOTIFICATIONS_CONFIG_PATH`, `OBSERVATIONS_PATH`, `AUDIT_LOG_PATH`, `ASK_DB_PATH`
 - Security/admin: `ADMIN_TOKEN`, `EXPOSE_SERVICE_URLS`, `CORS_ORIGINS`
 - Flapping/incident behavior: `FLAP_WINDOW_SECONDS`, `FLAP_THRESHOLD`, `OBSERVATIONS_HISTORY_LIMIT`
@@ -261,6 +269,24 @@ Notes:
 - `/ask` and `/admin` are served with strict security headers in nginx: CSP, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, and restrictive `Permissions-Policy`.
 - `Cache-Control: no-store` is set for Ask/Admin pages and Ask SSE responses.
 - SMTP auth uses `SMTP_USER`/`SMTP_PASS`, while message sender uses `SMTP_FROM`.
+- Backend runs as non-root by default (`10001:10001`). If `./data` permissions fail on Linux hosts, run `sudo chown -R 10001:10001 ./data` or set `BACKEND_UID`/`BACKEND_GID` in `.env`.
+
+## Secrets Handling
+
+See `docs/security/secrets.md` for operational policy and redaction workflow.
+
+- Safe resolved compose output: `bash scripts/safe_compose_config.sh`
+- Do not share raw `docker compose config` output in tickets/chats.
+
+### Optional Docker Secrets Overlay
+
+Default `.env` behavior is unchanged. For file-backed secrets:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.secrets.yml up -d
+```
+
+Place secret files under `./secrets/` (for example `secrets/ADMIN_TOKEN`, `secrets/SESSION_SECRET`).
 
 ## Local Development (without Docker)
 
@@ -298,6 +324,11 @@ MARCLE_BASE_URL=http://localhost:9182 ADMIN_TOKEN=... python scripts/audit_servi
 ```
 
 Note: script default base URL is `http://localhost:9181`; set `MARCLE_BASE_URL` explicitly for this repo's compose defaults.
+
+Additional security utilities:
+
+- `bash scripts/safe_compose_config.sh` — redacted compose config output
+- `bash scripts/audit_arch.sh` — hardened architecture verification run
 
 ## Deployment Notes
 

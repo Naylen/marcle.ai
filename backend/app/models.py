@@ -248,4 +248,6 @@ class AdminAuditEntry(BaseModel):
     ids: Optional[list[str]] = None
     enabled: Optional[bool] = None
     ip: Optional[str] = None
+    forwarded_for_chain: Optional[str] = None
+    actor_email: Optional[str] = None
     user_agent: Optional[str] = None

@@ -2,6 +2,8 @@
 
 import os
 
+from app.env_utils import get_env
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -31,38 +33,38 @@ EXPOSE_SERVICE_URLS: bool = _env_bool("EXPOSE_SERVICE_URLS", False)
 CORS_ORIGINS: list[str] = _env_csv("CORS_ORIGINS")
 FLAP_WINDOW_SECONDS: int = int(os.getenv("FLAP_WINDOW_SECONDS", "600"))
 FLAP_THRESHOLD: int = int(os.getenv("FLAP_THRESHOLD", "3"))
-ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
+ADMIN_TOKEN: str = get_env("ADMIN_TOKEN", "")
 
 # Proxmox
 PROXMOX_URL: str = os.getenv("PROXMOX_URL", "")
-PROXMOX_API_TOKEN: str = os.getenv("PROXMOX_API_TOKEN", "")
+PROXMOX_API_TOKEN: str = get_env("PROXMOX_API_TOKEN", "")
 
 # UniFi
 UNIFI_URL: str = os.getenv("UNIFI_URL", "")
 UNIFI_PROTECT_URL: str = os.getenv("UNIFI_PROTECT_URL", "")
-UNIFI_API_KEY: str = os.getenv("UNIFI_API_KEY", "")
+UNIFI_API_KEY: str = get_env("UNIFI_API_KEY", "")
 
 # Home Assistant
 HOMEASSISTANT_URL: str = os.getenv("HOMEASSISTANT_URL", "")
-HOMEASSISTANT_TOKEN: str = os.getenv("HOMEASSISTANT_TOKEN", "")
+HOMEASSISTANT_TOKEN: str = get_env("HOMEASSISTANT_TOKEN", "")
 
 # Plex
 PLEX_URL: str = os.getenv("PLEX_URL", "")
-PLEX_TOKEN: str = os.getenv("PLEX_TOKEN", "")
+PLEX_TOKEN: str = get_env("PLEX_TOKEN", "")
 
 # Overseerr
 OVERSEERR_URL: str = os.getenv("OVERSEERR_URL", "")
-OVERSEERR_API_KEY: str = os.getenv("OVERSEERR_API_KEY", "")
+OVERSEERR_API_KEY: str = get_env("OVERSEERR_API_KEY", "")
 
 # Tautulli
 TAUTULLI_URL: str = os.getenv("TAUTULLI_URL", "")
-TAUTULLI_API_KEY: str = os.getenv("TAUTULLI_API_KEY", "")
+TAUTULLI_API_KEY: str = get_env("TAUTULLI_API_KEY", "")
 
 # Arr Stack
 RADARR_URL: str = os.getenv("RADARR_URL", "")
-RADARR_API_KEY: str = os.getenv("RADARR_API_KEY", "")
+RADARR_API_KEY: str = get_env("RADARR_API_KEY", "")
 SONARR_URL: str = os.getenv("SONARR_URL", "")
-SONARR_API_KEY: str = os.getenv("SONARR_API_KEY", "")
+SONARR_API_KEY: str = get_env("SONARR_API_KEY", "")
 
 # Ollama
 OLLAMA_URL: str = os.getenv("OLLAMA_URL", "")
@@ -77,7 +79,7 @@ ASK_POINTS_ENABLED: bool = _env_bool("ASK_POINTS_ENABLED", False)
 ASK_HUMAN_WAIT_SECONDS: int = int(os.getenv("ASK_HUMAN_WAIT_SECONDS", os.getenv("ASK_FALLBACK_SECONDS", "300")))
 ASK_OPENAI_WAIT_SECONDS: int = int(os.getenv("ASK_OPENAI_WAIT_SECONDS", "600"))
 LOCAL_LLM_BASE_URL: str = os.getenv("LOCAL_LLM_BASE_URL", "http://172.16.2.220:12434/engines/v1")
-LOCAL_LLM_API_KEY: str = os.getenv("LOCAL_LLM_API_KEY", "not-needed")
+LOCAL_LLM_API_KEY: str = get_env("LOCAL_LLM_API_KEY", "not-needed")
 LOCAL_LLM_MODEL: str = os.getenv("LOCAL_LLM_MODEL", "ai/llama3.2:latest")
 LOCAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("LOCAL_LLM_TIMEOUT_SECONDS", "90"))
 OPENAI_TIMEOUT_SECONDS: float = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "600"))

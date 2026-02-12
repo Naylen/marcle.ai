@@ -2,16 +2,44 @@ services:
   frontend:
     build: ./frontend
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+      - /var/cache/nginx:rw,noexec,nosuid,size=64m,uid=101,gid=101
+      - /var/run:rw,nosuid,size=8m,uid=101,gid=101
+      - /var/log/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: ${FRONTEND_MEM_LIMIT:-256m}
     ports:
-      - "9182:80"
+      - "9182:8080"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     networks:
       - app_net
 
   backend:
     build: ./backend
     restart: unless-stopped
+    user: "${BACKEND_UID:-10001}:${BACKEND_GID:-10001}"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: ${BACKEND_MEM_LIMIT:-768m}
     # Optional local debug override:
     # ports:
     #   - "8000:8000"

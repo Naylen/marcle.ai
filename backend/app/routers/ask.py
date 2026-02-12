@@ -29,14 +29,15 @@ from app.ask_services.email import send_answer_email, send_custom_email, send_cu
 from app.ask_services.llm import generate_local_answer_text, generate_openai_answer_text
 from app.ask_services.google_oauth import GOOGLE_REDIRECT_URL, exchange_code, get_login_url, get_user_info
 from app.discord_client import post_answer_to_discord
+from app.env_utils import get_env
 
 logger = logging.getLogger("marcle.ask")
 
 router = APIRouter(prefix="/api/ask", tags=["ask"])
 
 # --- Config ---
-SESSION_SECRET: str = os.getenv("SESSION_SECRET", "change-me-in-production")
-ASK_ANSWER_WEBHOOK_SECRET: str = os.getenv("ASK_ANSWER_WEBHOOK_SECRET", "")
+SESSION_SECRET: str = get_env("SESSION_SECRET", "change-me-in-production")
+ASK_ANSWER_WEBHOOK_SECRET: str = get_env("ASK_ANSWER_WEBHOOK_SECRET", "")
 BASE_PUBLIC_URL: str = os.getenv("BASE_PUBLIC_URL", "")
 ASK_HUMAN_WAIT_SECONDS: int = max(int(app_config.ASK_HUMAN_WAIT_SECONDS), 1)
 ASK_OPENAI_WAIT_SECONDS: int = max(int(app_config.ASK_OPENAI_WAIT_SECONDS), ASK_HUMAN_WAIT_SECONDS)
@@ -348,6 +349,12 @@ async def _publish_question_event(question_id: int, event_name: str, payload: di
 
 
 def _extract_client_ip(request: Request) -> str:
+    trusted_ip = (request.headers.get("x-marcle-client-ip") or "").strip()
+    if trusted_ip:
+        return trusted_ip
+    forwarded = (request.headers.get("x-marcle-forwarded-for-chain") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded
     forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
     if forwarded:
         return forwarded
@@ -511,7 +518,7 @@ def _get_oauth_redirect_uri(request: Request) -> str:
 
 def _require_n8n_token(x_n8n_token: str = Header(default="", alias="X-N8N-TOKEN")) -> None:
     """Validate n8n shared token for Discord integration endpoints."""
-    n8n_token = os.getenv("N8N_TOKEN", "")
+    n8n_token = get_env("N8N_TOKEN", "")
     if not n8n_token or not hmac.compare_digest(x_n8n_token, n8n_token):
         logger.warning("ask_webhook_rejected reason=invalid_n8n_token")
         raise HTTPException(
@@ -556,7 +563,7 @@ async def _require_webhook_size_limit(request: Request) -> None:
 
 def _is_admin_override_token(token: str) -> bool:
     candidate = (token or "").strip()
-    admin_token = os.getenv("ADMIN_TOKEN", "").strip()
+    admin_token = get_env("ADMIN_TOKEN", "").strip()
     if not candidate or not admin_token:
         return False
     return hmac.compare_digest(candidate, admin_token)
@@ -1721,7 +1728,7 @@ async def admin_email_test(body: AdminEmailTestRequest, request: Request):
 
 def _require_admin_token(request: Request) -> None:
     """Validate admin bearer token for Ask admin endpoints."""
-    admin_token = os.getenv("ADMIN_TOKEN", "")
+    admin_token = get_env("ADMIN_TOKEN", "")
     if not admin_token:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Admin API is disabled")
     auth = request.headers.get("Authorization", "")

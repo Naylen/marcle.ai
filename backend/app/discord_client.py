@@ -7,6 +7,8 @@ from typing import Awaitable, Callable
 
 import httpx
 
+from app.env_utils import get_env
+
 try:
     import discord
 except Exception:  # pragma: no cover - optional dependency at runtime
@@ -14,7 +16,7 @@ except Exception:  # pragma: no cover - optional dependency at runtime
 
 logger = logging.getLogger("marcle.ask.discord.bot")
 
-DISCORD_BOT_TOKEN: str = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_BOT_TOKEN: str = get_env("DISCORD_BOT_TOKEN", "")
 DISCORD_SUPPORT_ROLE_ID: str = os.getenv("DISCORD_SUPPORT_ROLE_ID", "")
 DISCORD_API_BASE: str = os.getenv("DISCORD_API_BASE", "https://discord.com/api/v10")
 

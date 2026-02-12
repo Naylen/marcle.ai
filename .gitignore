@@ -32,6 +32,9 @@ Thumbs.db
 
 # Docker
 *.log
+secrets/
+*.secret
+output/
 
 # Mounted volumes
 mnt/

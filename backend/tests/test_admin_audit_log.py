@@ -121,7 +121,9 @@ def test_admin_write_actions_append_audit_entries(monkeypatch, tmp_path):
     client = TestClient(app)
     headers = {
         "Authorization": "Bearer admin-token",
-        "X-Forwarded-For": "198.51.100.17, 203.0.113.8",
+        "X-Marcle-Client-IP": "198.51.100.17",
+        "X-Marcle-Forwarded-For-Chain": "198.51.100.17, 203.0.113.8",
+        "X-Marcle-Actor-Email": "admin@example.com",
         "User-Agent": "audit-test-agent",
     }
 
@@ -176,6 +178,8 @@ def test_admin_write_actions_append_audit_entries(monkeypatch, tmp_path):
     delete_entry = entries[0]
     assert delete_entry["service_id"] == "svc-c"
     assert delete_entry["ip"] == "198.51.100.17"
+    assert delete_entry["forwarded_for_chain"] == "198.51.100.17, 203.0.113.8"
+    assert delete_entry["actor_email"] == "admin@example.com"
     assert delete_entry["user_agent"] == "audit-test-agent"
 
     bulk_entry = entries[1]

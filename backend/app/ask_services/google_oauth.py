@@ -5,8 +5,10 @@ import urllib.parse
 
 import httpx
 
+from app.env_utils import get_env
+
 GOOGLE_CLIENT_ID: str = os.getenv("GOOGLE_CLIENT_ID", "")
-GOOGLE_CLIENT_SECRET: str = os.getenv("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_CLIENT_SECRET: str = get_env("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URL: str = os.getenv("GOOGLE_REDIRECT_URL", "")
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"

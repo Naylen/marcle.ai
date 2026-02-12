@@ -49,9 +49,9 @@ logger = logging.getLogger("marcle.api")
 
 
 def _log_startup_env_warnings() -> None:
-    if not os.getenv("ADMIN_TOKEN"):
+    if not config.ADMIN_TOKEN:
         logger.warning("ADMIN_TOKEN is not set; admin endpoints are disabled.")
-    if not os.getenv("TAUTULLI_API_KEY"):
+    if not config.TAUTULLI_API_KEY:
         logger.warning("TAUTULLI_API_KEY is not set; Tautulli checks may report unknown.")
 
 
@@ -526,21 +526,29 @@ def _sanitize_audit_value(value: str | None, max_length: int) -> str | None:
     return compact[:max_length]
 
 
-def _best_effort_client_ip(request: Request, x_forwarded_for: str | None) -> str | None:
-    if x_forwarded_for:
-        forwarded = x_forwarded_for.split(",")[0].strip()
-        cleaned_forwarded = _sanitize_audit_value(forwarded, max_length=128)
-        if cleaned_forwarded:
-            return cleaned_forwarded
+def _best_effort_client_ip(request: Request, x_marcle_client_ip: str | None) -> str | None:
+    cleaned_ip = _sanitize_audit_value(x_marcle_client_ip, max_length=128)
+    if cleaned_ip:
+        return cleaned_ip
     client_host = request.client.host if request.client else None
     return _sanitize_audit_value(client_host, max_length=128)
+
+
+def _best_effort_forwarded_for_chain(x_marcle_forwarded_for_chain: str | None) -> str | None:
+    return _sanitize_audit_value(x_marcle_forwarded_for_chain, max_length=512)
+
+
+def _best_effort_actor_email(x_marcle_actor_email: str | None) -> str | None:
+    return _sanitize_audit_value(x_marcle_actor_email, max_length=320)
 
 
 async def _append_admin_audit_entry(
     *,
     action: str,
     request: Request,
-    x_forwarded_for: str | None,
+    x_marcle_client_ip: str | None,
+    x_marcle_forwarded_for_chain: str | None,
+    x_marcle_actor_email: str | None,
     user_agent: str | None,
     service_id: str | None = None,
     ids: list[str] | None = None,
@@ -550,7 +558,9 @@ async def _append_admin_audit_entry(
         "ts": datetime.now(timezone.utc).isoformat(),
         "action": action,
         "service_id": service_id,
-        "ip": _best_effort_client_ip(request, x_forwarded_for),
+        "ip": _best_effort_client_ip(request, x_marcle_client_ip),
+        "forwarded_for_chain": _best_effort_forwarded_for_chain(x_marcle_forwarded_for_chain),
+        "actor_email": _best_effort_actor_email(x_marcle_actor_email),
         "user_agent": _sanitize_audit_value(user_agent, max_length=512),
     }
     if ids is not None:
@@ -629,7 +639,9 @@ async def get_admin_notifications(_: None = Depends(_require_admin)):
 async def put_admin_notifications(
     payload: NotificationsConfig,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -638,7 +650,9 @@ async def put_admin_notifications(
         action="notifications_update",
         service_id=None,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     return _to_admin_notifications_config(saved)
@@ -647,7 +661,9 @@ async def put_admin_notifications(
 @app.post("/api/admin/notifications/test")
 async def post_admin_notifications_test(
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -657,7 +673,9 @@ async def post_admin_notifications_test(
         action="notifications_test",
         service_id=None,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     return {
@@ -670,7 +688,9 @@ async def post_admin_notifications_test(
 async def create_admin_service(
     service: ServiceConfig,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -682,7 +702,9 @@ async def create_admin_service(
         action="create",
         service_id=service.id,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     await _invalidate_and_refresh()
@@ -694,7 +716,9 @@ async def upsert_admin_service(
     service_id: str,
     service: ServiceConfig,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -705,7 +729,9 @@ async def upsert_admin_service(
         action="update",
         service_id=service.id,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     await _invalidate_and_refresh()
@@ -716,7 +742,9 @@ async def upsert_admin_service(
 async def delete_admin_service(
     service_id: str,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -727,7 +755,9 @@ async def delete_admin_service(
         action="delete",
         service_id=removed.id,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     await _invalidate_and_refresh()
@@ -738,7 +768,9 @@ async def delete_admin_service(
 async def bulk_admin_services(
     payload: AdminBulkServicesRequest,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -751,7 +783,9 @@ async def bulk_admin_services(
         ids=payload.ids,
         enabled=payload.enabled,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     await _invalidate_and_refresh()
@@ -763,7 +797,9 @@ async def bulk_admin_services(
 async def toggle_admin_service(
     service_id: str,
     request: Request,
-    x_forwarded_for: str | None = Header(default=None, alias="X-Forwarded-For"),
+    x_marcle_client_ip: str | None = Header(default=None, alias="X-Marcle-Client-IP"),
+    x_marcle_forwarded_for_chain: str | None = Header(default=None, alias="X-Marcle-Forwarded-For-Chain"),
+    x_marcle_actor_email: str | None = Header(default=None, alias="X-Marcle-Actor-Email"),
     user_agent: str | None = Header(default=None, alias="User-Agent"),
     _: None = Depends(_require_admin),
 ):
@@ -775,7 +811,9 @@ async def toggle_admin_service(
         service_id=updated.id,
         enabled=updated.enabled,
         request=request,
-        x_forwarded_for=x_forwarded_for,
+        x_marcle_client_ip=x_marcle_client_ip,
+        x_marcle_forwarded_for_chain=x_marcle_forwarded_for_chain,
+        x_marcle_actor_email=x_marcle_actor_email,
         user_agent=user_agent,
     )
     await _invalidate_and_refresh()

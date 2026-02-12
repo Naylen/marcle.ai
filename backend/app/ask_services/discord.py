@@ -9,10 +9,12 @@ import urllib.parse
 
 import httpx
 
+from app.env_utils import get_env
+
 logger = logging.getLogger("marcle.ask.discord")
 
-DISCORD_WEBHOOK_URL: str = os.getenv("DISCORD_WEBHOOK_URL", "")
-DISCORD_BOT_TOKEN: str = os.getenv("DISCORD_BOT_TOKEN", "")
+DISCORD_WEBHOOK_URL: str = get_env("DISCORD_WEBHOOK_URL", "")
+DISCORD_BOT_TOKEN: str = get_env("DISCORD_BOT_TOKEN", "")
 DISCORD_ASK_CHANNEL_ID: str = os.getenv("DISCORD_ASK_CHANNEL_ID", "")
 DISCORD_GUILD_ID: str = os.getenv("DISCORD_GUILD_ID", "")
 DISCORD_API_BASE: str = os.getenv("DISCORD_API_BASE", "https://discord.com/api/v10")
